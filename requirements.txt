@@ -1,0 +1,6 @@
+# Core dependencies
+databricks-sdk>=0.23.0
+pydantic>=2.0.0
+
+# Optional: Databricks Agent Framework integration
+# databricks-agents>=0.1.0

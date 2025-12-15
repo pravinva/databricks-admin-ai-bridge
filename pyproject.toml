@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "databricks-admin-ai-bridge"
+version = "0.1.0"
+description = "AI-friendly admin tools for Databricks platform APIs"
+readme = "README.md"
+authors = [
+    {name = "Databricks", email = "noreply@databricks.com"}
+]
+license = {text = "Apache-2.0"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "databricks-sdk>=0.23.0",
+    "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+agents = [
+    "databricks-agents>=0.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/databricks/admin-ai-bridge"
+Documentation = "https://github.com/databricks/admin-ai-bridge/blob/main/README.md"
+Repository = "https://github.com/databricks/admin-ai-bridge"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["admin_ai_bridge*"]
+
+[tool.black]
+line-length = 120
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --cov=admin_ai_bridge --cov-report=term-missing"
