@@ -83,6 +83,36 @@ class UsageAdmin:
             f"budget_table={budget_table}, warehouse_id={warehouse_id}"
         )
 
+    def _table_exists(self, table_name: str) -> bool:
+        """
+        Check if a table exists in the workspace.
+
+        Args:
+            table_name: Fully qualified table name (e.g., "billing.usage_events")
+
+        Returns:
+            True if table exists, False otherwise
+        """
+        try:
+            # Parse table name
+            parts = table_name.split(".")
+            if len(parts) == 3:
+                catalog, schema, table = parts
+            elif len(parts) == 2:
+                # Assume default catalog if not specified
+                schema, table = parts
+                catalog = "hive_metastore"
+            else:
+                logger.warning(f"Invalid table name format: {table_name}")
+                return False
+
+            # Use workspace client to check table existence
+            tables = self.ws.tables.list(catalog_name=catalog, schema_name=schema)
+            return any(t.name == table for t in tables)
+        except Exception as e:
+            logger.debug(f"Table {table_name} does not exist or is not accessible: {e}")
+            return False
+
     def top_cost_centers(
         self,
         lookback_days: int = 7,
@@ -315,6 +345,10 @@ class UsageAdmin:
             - cost: Cost in currency units
             - dbu_consumed: DBUs consumed
             - tags: Map or struct containing tag key-value pairs (for tag: dimensions)
+
+        Prerequisites:
+            - Usage table (default: billing.usage_events) must exist
+            - Table must be configured with billing data export from Databricks account console
         """
         # Validate parameters
         if lookback_days <= 0:
@@ -325,6 +359,14 @@ class UsageAdmin:
         logger.info(
             f"Querying cost by dimension '{dimension}' for last {lookback_days} days"
         )
+
+        # Check if usage table exists
+        if not self._table_exists(self.usage_table):
+            logger.info(
+                f"Table {self.usage_table} not found. Please configure billing data export "
+                "in the Databricks account console. Returning empty results."
+            )
+            return []
 
         # Validate and parse dimension
         dimension_lower = dimension.lower()
@@ -486,6 +528,11 @@ class UsageAdmin:
               - dimension_value: The specific entity (e.g., workspace ID, project name)
               - budget_amount: The allocated budget amount
               - period: Optional period identifier (e.g., "2024-01")
+
+        Prerequisites:
+            - Usage table (default: billing.usage_events) must exist
+            - Budget table (default: billing.budgets) must exist
+            - Tables must be configured with billing data export from Databricks account console
         """
         # Validate parameters
         if period_days <= 0:
@@ -497,6 +544,21 @@ class UsageAdmin:
             f"Checking budget status for dimension '{dimension}' "
             f"(period={period_days} days, warn_threshold={warn_threshold})"
         )
+
+        # Check if required tables exist
+        if not self._table_exists(self.usage_table):
+            logger.info(
+                f"Table {self.usage_table} not found. Please configure billing data export "
+                "in the Databricks account console. Returning empty results."
+            )
+            return []
+
+        if not self._table_exists(self.budget_table):
+            logger.info(
+                f"Table {self.budget_table} not found. Please create a budget table "
+                "or configure billing data export. Returning empty results."
+            )
+            return []
 
         # Calculate time window
         now = datetime.now(timezone.utc)

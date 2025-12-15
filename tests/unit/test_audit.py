@@ -78,15 +78,18 @@ class TestFailedLogins:
         # Placeholder returns empty
         assert len(result) == 0
 
-    def test_failed_logins_log_warning(self, audit_admin, mock_workspace_client, caplog):
-        """Test that a warning is logged about placeholder implementation."""
+    def test_failed_logins_log_info_when_table_missing(self, audit_admin, mock_workspace_client, caplog):
+        """Test that info is logged when audit table is not available."""
         import logging
-        caplog.set_level(logging.WARNING)
+        caplog.set_level(logging.INFO)
+
+        # Mock table check to return False (table doesn't exist)
+        audit_admin._table_exists = lambda table: False
 
         audit_admin.failed_logins(lookback_hours=24.0)
 
-        # Check that warning was logged
-        assert any("placeholder" in record.message.lower() for record in caplog.records)
+        # Check that info message was logged about missing table
+        assert any("not found" in record.message.lower() for record in caplog.records)
 
 
 class TestRecentAdminChanges:
@@ -124,15 +127,18 @@ class TestRecentAdminChanges:
         # Placeholder returns empty
         assert len(result) == 0
 
-    def test_recent_admin_changes_log_warning(self, audit_admin, mock_workspace_client, caplog):
-        """Test that a warning is logged about placeholder implementation."""
+    def test_recent_admin_changes_log_info_when_table_missing(self, audit_admin, mock_workspace_client, caplog):
+        """Test that info is logged when audit table is not available."""
         import logging
-        caplog.set_level(logging.WARNING)
+        caplog.set_level(logging.INFO)
+
+        # Mock table check to return False (table doesn't exist)
+        audit_admin._table_exists = lambda table: False
 
         audit_admin.recent_admin_changes(lookback_hours=24.0)
 
-        # Check that warning was logged
-        assert any("placeholder" in record.message.lower() for record in caplog.records)
+        # Check that info message was logged about missing table
+        assert any("not found" in record.message.lower() for record in caplog.records)
 
     def test_recent_admin_changes_different_time_ranges(self, audit_admin):
         """Test with various time ranges."""

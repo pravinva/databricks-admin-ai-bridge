@@ -27,7 +27,10 @@ def mock_workspace_client():
 def usage_admin(mock_workspace_client):
     """Create a UsageAdmin instance with mocked client."""
     cfg = AdminBridgeConfig(profile="test")
-    return UsageAdmin(cfg)
+    admin = UsageAdmin(cfg)
+    # Mock table exists to return True by default for tests
+    admin._table_exists = lambda table: True
+    return admin
 
 
 class TestUsageAdminInit:
@@ -480,6 +483,8 @@ class TestCostByDimension:
             usage_table="custom_schema.usage_data",
             budget_table="custom_schema.budgets"
         )
+        # Mock table exists for this instance
+        usage_admin._table_exists = lambda table: True
 
         # Mock warehouse
         mock_warehouse = MagicMock()
@@ -569,6 +574,8 @@ class TestCostByDimension:
         """Test with explicit warehouse_id."""
         # Create admin with specific warehouse
         usage_admin = UsageAdmin(warehouse_id="my-warehouse-123")
+        # Mock table exists for this instance
+        usage_admin._table_exists = lambda table: True
 
         # Mock SQL result
         mock_statement = MagicMock()
@@ -811,6 +818,8 @@ class TestBudgetStatus:
             usage_table="custom_schema.usage_data",
             budget_table="custom_schema.budgets"
         )
+        # Mock table exists for this instance
+        usage_admin._table_exists = lambda table: True
 
         # Mock warehouse
         mock_warehouse = MagicMock()
@@ -872,6 +881,8 @@ class TestBudgetStatus:
         """Test with explicit warehouse_id."""
         # Create admin with specific warehouse
         usage_admin = UsageAdmin(warehouse_id="my-warehouse-123")
+        # Mock table exists for this instance
+        usage_admin._table_exists = lambda table: True
 
         # Mock SQL result
         mock_statement = MagicMock()
