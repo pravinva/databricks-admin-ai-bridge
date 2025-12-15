@@ -18,6 +18,10 @@ from .schemas import (
 from .jobs import JobsAdmin
 from .dbsql import DBSQLAdmin
 from .clusters import ClustersAdmin
+from .security import SecurityAdmin
+from .usage import UsageAdmin
+from .audit import AuditAdmin
+from .pipelines import PipelinesAdmin
 
 __version__ = "0.1.0"
 
@@ -34,4 +38,8 @@ __all__ = [
     "JobsAdmin",
     "DBSQLAdmin",
     "ClustersAdmin",
+    "SecurityAdmin",
+    "UsageAdmin",
+    "AuditAdmin",
+    "PipelinesAdmin",
 ]
