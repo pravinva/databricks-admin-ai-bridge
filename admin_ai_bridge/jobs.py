@@ -1,0 +1,324 @@
+"""
+Jobs and Workflows observability for Databricks Admin AI Bridge.
+
+This module provides read-only access to job run information including:
+- Long-running jobs
+- Failed jobs
+- Job run history and metrics
+"""
+
+import logging
+from datetime import datetime, timedelta, timezone
+from typing import List
+
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.jobs import RunLifeCycleState, RunResultState
+
+from .config import AdminBridgeConfig, get_workspace_client
+from .errors import APIError, ValidationError
+from .schemas import JobRunSummary
+
+logger = logging.getLogger(__name__)
+
+
+class JobsAdmin:
+    """
+    Admin interface for Databricks Jobs and Workflows.
+
+    This class provides read-only methods to query job runs, identify long-running
+    or failed jobs, and analyze job performance patterns.
+
+    All methods are safe and read-only - no destructive operations are performed.
+
+    Attributes:
+        ws: WorkspaceClient instance for API access
+    """
+
+    def __init__(self, cfg: AdminBridgeConfig | None = None):
+        """
+        Initialize JobsAdmin with optional configuration.
+
+        Args:
+            cfg: AdminBridgeConfig instance. If None, uses default credentials.
+
+        Examples:
+            >>> # Using profile
+            >>> cfg = AdminBridgeConfig(profile="DEFAULT")
+            >>> jobs_admin = JobsAdmin(cfg)
+
+            >>> # Using default credentials
+            >>> jobs_admin = JobsAdmin()
+        """
+        self.ws = get_workspace_client(cfg)
+        logger.info("JobsAdmin initialized")
+
+    def list_long_running_jobs(
+        self,
+        min_duration_hours: float = 4.0,
+        lookback_hours: float = 24.0,
+        limit: int = 100,
+    ) -> List[JobRunSummary]:
+        """
+        List job runs with duration exceeding the specified threshold.
+
+        This method identifies jobs that have been running longer than expected,
+        which may indicate performance issues, inefficient queries, or stuck jobs.
+
+        Args:
+            min_duration_hours: Minimum duration in hours to be considered long-running.
+                Must be positive. Default: 4.0 hours.
+            lookback_hours: How far back to search for runs. Must be positive.
+                Default: 24.0 hours.
+            limit: Maximum number of results to return. Must be positive.
+                Default: 100.
+
+        Returns:
+            List of JobRunSummary objects sorted by duration (longest first).
+
+        Raises:
+            ValidationError: If parameters are invalid (negative values, etc.)
+            APIError: If the Databricks API returns an error
+
+        Examples:
+            >>> jobs_admin = JobsAdmin()
+            >>> # Find jobs running over 6 hours in the last 48 hours
+            >>> long_jobs = jobs_admin.list_long_running_jobs(
+            ...     min_duration_hours=6.0,
+            ...     lookback_hours=48.0,
+            ...     limit=50
+            ... )
+            >>> for job in long_jobs:
+            ...     print(f"{job.job_name}: {job.duration_seconds / 3600:.1f} hours")
+        """
+        # Validate parameters
+        if min_duration_hours <= 0:
+            raise ValidationError("min_duration_hours must be positive")
+        if lookback_hours <= 0:
+            raise ValidationError("lookback_hours must be positive")
+        if limit <= 0:
+            raise ValidationError("limit must be positive")
+
+        logger.info(
+            f"Searching for jobs running > {min_duration_hours}h in last {lookback_hours}h"
+        )
+
+        # Calculate time window
+        now = datetime.now(timezone.utc)
+        start_time = now - timedelta(hours=lookback_hours)
+        min_duration_seconds = min_duration_hours * 3600
+
+        long_running_jobs = []
+
+        try:
+            # List all jobs to get their names and IDs
+            jobs = list(self.ws.jobs.list())
+            logger.debug(f"Found {len(jobs)} total jobs")
+
+            for job in jobs:
+                if not job.job_id:
+                    continue
+
+                try:
+                    # Get recent runs for this job
+                    runs = self.ws.jobs.list_runs(
+                        job_id=job.job_id,
+                        start_time_from=int(start_time.timestamp() * 1000),
+                        start_time_to=int(now.timestamp() * 1000),
+                        expand_tasks=False,
+                    )
+
+                    for run in runs:
+                        if not run.run_id:
+                            continue
+
+                        # Calculate duration
+                        start_ms = run.start_time
+                        end_ms = run.end_time
+
+                        if start_ms is None:
+                            continue
+
+                        # For running jobs, use current time as end time
+                        if end_ms is None and run.state and run.state.life_cycle_state == RunLifeCycleState.RUNNING:
+                            end_ms = int(now.timestamp() * 1000)
+                        elif end_ms is None:
+                            continue
+
+                        duration_seconds = (end_ms - start_ms) / 1000.0
+
+                        # Check if it meets the duration threshold
+                        if duration_seconds >= min_duration_seconds:
+                            # Determine overall state
+                            state = "UNKNOWN"
+                            if run.state:
+                                if run.state.result_state:
+                                    state = run.state.result_state.value
+                                elif run.state.life_cycle_state:
+                                    state = run.state.life_cycle_state.value
+
+                            job_summary = JobRunSummary(
+                                job_id=job.job_id,
+                                job_name=job.settings.name if job.settings else f"Job {job.job_id}",
+                                run_id=run.run_id,
+                                state=state,
+                                life_cycle_state=run.state.life_cycle_state.value if run.state and run.state.life_cycle_state else None,
+                                start_time=datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc),
+                                end_time=datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc) if end_ms else None,
+                                duration_seconds=duration_seconds,
+                            )
+                            long_running_jobs.append(job_summary)
+                            logger.debug(
+                                f"Found long-running job: {job_summary.job_name} "
+                                f"(run {job_summary.run_id}), duration: {duration_seconds / 3600:.2f}h"
+                            )
+
+                            # Stop if we've reached the limit
+                            if len(long_running_jobs) >= limit:
+                                break
+
+                except Exception as e:
+                    logger.warning(f"Error processing job {job.job_id}: {e}")
+                    continue
+
+                if len(long_running_jobs) >= limit:
+                    break
+
+        except Exception as e:
+            logger.error(f"Error listing long-running jobs: {e}")
+            raise APIError(f"Failed to list long-running jobs: {e}")
+
+        # Sort by duration (longest first)
+        long_running_jobs.sort(key=lambda x: x.duration_seconds or 0, reverse=True)
+
+        logger.info(f"Found {len(long_running_jobs)} long-running jobs")
+        return long_running_jobs[:limit]
+
+    def list_failed_jobs(
+        self,
+        lookback_hours: float = 24.0,
+        limit: int = 100,
+    ) -> List[JobRunSummary]:
+        """
+        List failed job runs within the specified time window.
+
+        This method identifies jobs that have failed, helping with troubleshooting
+        and identifying recurring issues.
+
+        Args:
+            lookback_hours: How far back to search for failed runs. Must be positive.
+                Default: 24.0 hours.
+            limit: Maximum number of results to return. Must be positive.
+                Default: 100.
+
+        Returns:
+            List of JobRunSummary objects for failed runs, sorted by start time (newest first).
+
+        Raises:
+            ValidationError: If parameters are invalid (negative values, etc.)
+            APIError: If the Databricks API returns an error
+
+        Examples:
+            >>> jobs_admin = JobsAdmin()
+            >>> # Find all failed jobs in the last 12 hours
+            >>> failed = jobs_admin.list_failed_jobs(lookback_hours=12.0)
+            >>> print(f"Found {len(failed)} failed jobs")
+            >>> for job in failed:
+            ...     print(f"{job.job_name} failed at {job.start_time}")
+        """
+        # Validate parameters
+        if lookback_hours <= 0:
+            raise ValidationError("lookback_hours must be positive")
+        if limit <= 0:
+            raise ValidationError("limit must be positive")
+
+        logger.info(f"Searching for failed jobs in last {lookback_hours}h")
+
+        # Calculate time window
+        now = datetime.now(timezone.utc)
+        start_time = now - timedelta(hours=lookback_hours)
+
+        failed_jobs = []
+
+        try:
+            # List all jobs
+            jobs = list(self.ws.jobs.list())
+            logger.debug(f"Found {len(jobs)} total jobs")
+
+            for job in jobs:
+                if not job.job_id:
+                    continue
+
+                try:
+                    # Get recent runs for this job
+                    runs = self.ws.jobs.list_runs(
+                        job_id=job.job_id,
+                        start_time_from=int(start_time.timestamp() * 1000),
+                        start_time_to=int(now.timestamp() * 1000),
+                        expand_tasks=False,
+                    )
+
+                    for run in runs:
+                        if not run.run_id or not run.state:
+                            continue
+
+                        # Check if the run failed
+                        is_failed = (
+                            run.state.result_state == RunResultState.FAILED or
+                            run.state.result_state == RunResultState.TIMEDOUT or
+                            run.state.life_cycle_state == RunLifeCycleState.INTERNAL_ERROR
+                        )
+
+                        if is_failed:
+                            start_ms = run.start_time
+                            end_ms = run.end_time
+
+                            duration_seconds = None
+                            if start_ms and end_ms:
+                                duration_seconds = (end_ms - start_ms) / 1000.0
+
+                            # Determine overall state
+                            state = "FAILED"
+                            if run.state.result_state:
+                                state = run.state.result_state.value
+                            elif run.state.life_cycle_state:
+                                state = run.state.life_cycle_state.value
+
+                            job_summary = JobRunSummary(
+                                job_id=job.job_id,
+                                job_name=job.settings.name if job.settings else f"Job {job.job_id}",
+                                run_id=run.run_id,
+                                state=state,
+                                life_cycle_state=run.state.life_cycle_state.value if run.state.life_cycle_state else None,
+                                start_time=datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc) if start_ms else None,
+                                end_time=datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc) if end_ms else None,
+                                duration_seconds=duration_seconds,
+                            )
+                            failed_jobs.append(job_summary)
+                            logger.debug(
+                                f"Found failed job: {job_summary.job_name} "
+                                f"(run {job_summary.run_id}), state: {state}"
+                            )
+
+                            # Stop if we've reached the limit
+                            if len(failed_jobs) >= limit:
+                                break
+
+                except Exception as e:
+                    logger.warning(f"Error processing job {job.job_id}: {e}")
+                    continue
+
+                if len(failed_jobs) >= limit:
+                    break
+
+        except Exception as e:
+            logger.error(f"Error listing failed jobs: {e}")
+            raise APIError(f"Failed to list failed jobs: {e}")
+
+        # Sort by start time (newest first)
+        failed_jobs.sort(
+            key=lambda x: x.start_time if x.start_time else datetime.min.replace(tzinfo=timezone.utc),
+            reverse=True
+        )
+
+        logger.info(f"Found {len(failed_jobs)} failed jobs")
+        return failed_jobs[:limit]

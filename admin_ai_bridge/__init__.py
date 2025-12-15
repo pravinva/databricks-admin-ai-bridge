@@ -15,6 +15,9 @@ from .schemas import (
     AuditEvent,
     PipelineStatus,
 )
+from .jobs import JobsAdmin
+from .dbsql import DBSQLAdmin
+from .clusters import ClustersAdmin
 
 __version__ = "0.1.0"
 
@@ -28,4 +31,7 @@ __all__ = [
     "UsageEntry",
     "AuditEvent",
     "PipelineStatus",
+    "JobsAdmin",
+    "DBSQLAdmin",
+    "ClustersAdmin",
 ]
