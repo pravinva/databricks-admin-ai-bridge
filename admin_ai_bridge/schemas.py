@@ -158,3 +158,21 @@ class PipelineStatus(BaseModel):
     last_update_time: datetime | None = Field(default=None, description="When the pipeline last updated")
     lag_seconds: float | None = Field(default=None, description="Current lag in seconds for streaming pipelines")
     last_error: str | None = Field(default=None, description="Last error message if any")
+
+
+class BudgetStatus(BaseModel):
+    """
+    Budget vs actuals status for a dimension (workspace, project, team).
+
+    Attributes:
+        dimension_value: The specific value of the dimension (e.g., workspace ID, project name)
+        actual_cost: Actual cost incurred during the period
+        budget_amount: Allocated budget for the period
+        utilization_pct: Percentage of budget utilized (actual_cost / budget_amount)
+        status: Budget status - "within_budget" (<80%), "warning" (80-100%), or "breached" (>100%)
+    """
+    dimension_value: str = Field(description="The specific value of the dimension")
+    actual_cost: float = Field(description="Actual cost incurred during the period")
+    budget_amount: float = Field(description="Allocated budget for the period")
+    utilization_pct: float = Field(description="Percentage of budget utilized")
+    status: str = Field(description="Budget status: within_budget, warning, or breached")

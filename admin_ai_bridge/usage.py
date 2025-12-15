@@ -15,7 +15,7 @@ from databricks.sdk import WorkspaceClient
 
 from .config import AdminBridgeConfig, get_workspace_client
 from .errors import APIError, ValidationError
-from .schemas import UsageEntry
+from .schemas import UsageEntry, BudgetStatus
 
 logger = logging.getLogger(__name__)
 
@@ -36,25 +36,52 @@ class UsageAdmin:
 
     Attributes:
         ws: WorkspaceClient instance for API access
+        usage_table: Name of the usage events table in the lakehouse
+        budget_table: Name of the budget table in the lakehouse
+        warehouse_id: SQL warehouse ID for executing queries (optional)
     """
 
-    def __init__(self, cfg: AdminBridgeConfig | None = None):
+    def __init__(
+        self,
+        cfg: AdminBridgeConfig | None = None,
+        usage_table: str = "billing.usage_events",
+        budget_table: str = "billing.budgets",
+        warehouse_id: str | None = None,
+    ):
         """
         Initialize UsageAdmin with optional configuration.
 
         Args:
             cfg: AdminBridgeConfig instance. If None, uses default credentials.
+            usage_table: Fully qualified name of the usage events table.
+                Default: "billing.usage_events"
+            budget_table: Fully qualified name of the budget table.
+                Default: "billing.budgets"
+            warehouse_id: SQL warehouse ID for executing queries.
+                If None, uses the default warehouse.
 
         Examples:
             >>> # Using profile
             >>> cfg = AdminBridgeConfig(profile="DEFAULT")
             >>> usage_admin = UsageAdmin(cfg)
 
-            >>> # Using default credentials
-            >>> usage_admin = UsageAdmin()
+            >>> # Using default credentials with custom table names
+            >>> usage_admin = UsageAdmin(
+            ...     usage_table="custom_schema.usage_data",
+            ...     budget_table="custom_schema.budgets"
+            ... )
+
+            >>> # With specific warehouse
+            >>> usage_admin = UsageAdmin(warehouse_id="abc123def456")
         """
         self.ws = get_workspace_client(cfg)
-        logger.info("UsageAdmin initialized")
+        self.usage_table = usage_table
+        self.budget_table = budget_table
+        self.warehouse_id = warehouse_id
+        logger.info(
+            f"UsageAdmin initialized with usage_table={usage_table}, "
+            f"budget_table={budget_table}, warehouse_id={warehouse_id}"
+        )
 
     def top_cost_centers(
         self,
@@ -223,3 +250,370 @@ class UsageAdmin:
         except Exception as e:
             logger.error(f"Error querying usage data: {e}")
             raise APIError(f"Failed to query usage data: {e}")
+
+    def cost_by_dimension(
+        self,
+        dimension: str,
+        lookback_days: int = 30,
+        limit: int = 100,
+    ) -> List[UsageEntry]:
+        """
+        Aggregate cost and DBUs by a given dimension for chargeback analysis.
+
+        This method queries the usage table and groups costs by the specified dimension
+        (workspace, cluster, job, warehouse, or tag). This is useful for implementing
+        chargeback models and understanding which teams/projects are consuming resources.
+
+        Args:
+            dimension: Dimension to aggregate by. Supported values:
+                - "workspace": Group by workspace_id
+                - "cluster": Group by cluster_id
+                - "job": Group by job_id
+                - "warehouse": Group by warehouse_id
+                - "tag:KEY": Group by tag value (e.g., "tag:project", "tag:team")
+            lookback_days: Number of days to look back for usage data. Must be positive.
+                Default: 30 days.
+            limit: Maximum number of results to return. Must be positive.
+                Default: 100.
+
+        Returns:
+            List of UsageEntry objects sorted by cost (highest first).
+            Each entry contains aggregated cost and DBU data for the dimension value.
+
+        Raises:
+            ValidationError: If parameters are invalid (negative values, unsupported dimension)
+            APIError: If the SQL query or Databricks API returns an error
+
+        Examples:
+            >>> usage_admin = UsageAdmin()
+
+            >>> # Get cost by workspace
+            >>> workspace_costs = usage_admin.cost_by_dimension(
+            ...     dimension="workspace",
+            ...     lookback_days=30
+            ... )
+            >>> for entry in workspace_costs:
+            ...     print(f"{entry.name}: ${entry.cost:.2f}")
+
+            >>> # Get cost by project tag
+            >>> project_costs = usage_admin.cost_by_dimension(
+            ...     dimension="tag:project",
+            ...     lookback_days=7,
+            ...     limit=20
+            ... )
+
+            >>> # Get cost by cluster
+            >>> cluster_costs = usage_admin.cost_by_dimension(
+            ...     dimension="cluster",
+            ...     lookback_days=30
+            ... )
+
+        Note:
+            This method requires a usage table with the following schema:
+            - timestamp: Event timestamp
+            - workspace_id, cluster_id, job_id, warehouse_id: Resource identifiers
+            - cost: Cost in currency units
+            - dbu_consumed: DBUs consumed
+            - tags: Map or struct containing tag key-value pairs (for tag: dimensions)
+        """
+        # Validate parameters
+        if lookback_days <= 0:
+            raise ValidationError("lookback_days must be positive")
+        if limit <= 0:
+            raise ValidationError("limit must be positive")
+
+        logger.info(
+            f"Querying cost by dimension '{dimension}' for last {lookback_days} days"
+        )
+
+        # Validate and parse dimension
+        dimension_lower = dimension.lower()
+        is_tag_dimension = dimension_lower.startswith("tag:")
+
+        if is_tag_dimension:
+            # Extract tag key
+            tag_key = dimension[4:]  # Remove "tag:" prefix
+            if not tag_key:
+                raise ValidationError("Tag dimension must specify a key (e.g., 'tag:project')")
+            group_column = f"tags['{tag_key}']"
+            dimension_type = "tag"
+            logger.debug(f"Using tag dimension: {tag_key}")
+        elif dimension_lower in ["workspace", "cluster", "job", "warehouse"]:
+            group_column = f"{dimension_lower}_id"
+            dimension_type = dimension_lower
+            logger.debug(f"Using standard dimension: {dimension_lower}")
+        else:
+            raise ValidationError(
+                f"Unsupported dimension '{dimension}'. "
+                "Supported: workspace, cluster, job, warehouse, or tag:KEY"
+            )
+
+        # Calculate time window
+        now = datetime.now(timezone.utc)
+        start_time = now - timedelta(days=lookback_days)
+        start_time_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
+        end_time_str = now.strftime("%Y-%m-%d %H:%M:%S")
+
+        # Build SQL query
+        sql = f"""
+        SELECT
+            {group_column} as dimension_value,
+            SUM(cost) as total_cost,
+            SUM(dbu_consumed) as total_dbus,
+            MIN(timestamp) as start_time,
+            MAX(timestamp) as end_time
+        FROM {self.usage_table}
+        WHERE timestamp >= '{start_time_str}'
+          AND timestamp < '{end_time_str}'
+          AND {group_column} IS NOT NULL
+        GROUP BY {group_column}
+        ORDER BY total_cost DESC
+        LIMIT {limit}
+        """
+
+        try:
+            logger.debug(f"Executing SQL query: {sql}")
+
+            # Execute SQL query using statement execution API
+            # Note: In production, you'd use the SQL Statement Execution API
+            # For now, we'll use a simplified approach with the workspace client
+            statement = self.ws.statement_execution.execute_statement(
+                warehouse_id=self.warehouse_id or self._get_default_warehouse_id(),
+                statement=sql,
+                wait_timeout="30s"
+            )
+
+            # Parse results
+            usage_entries = []
+            if statement.result and statement.result.data_array:
+                for row in statement.result.data_array:
+                    # row format: [dimension_value, total_cost, total_dbus, start_time, end_time]
+                    dimension_value = str(row[0]) if row[0] is not None else "unknown"
+                    total_cost = float(row[1]) if row[1] is not None else 0.0
+                    total_dbus = float(row[2]) if row[2] is not None else 0.0
+                    row_start_time = datetime.fromisoformat(row[3]) if row[3] else start_time
+                    row_end_time = datetime.fromisoformat(row[4]) if row[4] else now
+
+                    entry = UsageEntry(
+                        scope=dimension_type,
+                        name=dimension_value,
+                        start_time=row_start_time,
+                        end_time=row_end_time,
+                        cost=total_cost,
+                        dbus=total_dbus,
+                    )
+                    usage_entries.append(entry)
+                    logger.debug(
+                        f"{dimension_type} {dimension_value}: "
+                        f"${total_cost:.2f}, {total_dbus:.1f} DBUs"
+                    )
+
+            logger.info(f"Found {len(usage_entries)} entries for dimension '{dimension}'")
+            return usage_entries
+
+        except Exception as e:
+            logger.error(f"Error querying cost by dimension: {e}")
+            raise APIError(f"Failed to query cost by dimension: {e}")
+
+    def budget_status(
+        self,
+        dimension: str,
+        period_days: int = 30,
+        warn_threshold: float = 0.8,
+    ) -> List[dict]:
+        """
+        Get budget vs actuals status for each entity in a dimension.
+
+        This method compares actual costs against allocated budgets and returns
+        the status for each entity. This is useful for budget monitoring and
+        detecting overspending.
+
+        Args:
+            dimension: Dimension to check budgets for. Supported values:
+                - "workspace": Check workspace budgets
+                - "project": Check project budgets (typically from tags)
+                - "team": Check team budgets (typically from tags)
+                - Any custom dimension that exists in the budget table
+            period_days: Number of days in the budget period. Must be positive.
+                Default: 30 days (monthly).
+            warn_threshold: Threshold for warning status (0.0 to 1.0).
+                Default: 0.8 (80% utilization triggers warning).
+
+        Returns:
+            List of dictionaries, each containing:
+                - dimension_value (str): The entity identifier
+                - actual_cost (float): Actual cost incurred during the period
+                - budget_amount (float): Allocated budget amount
+                - utilization_pct (float): Budget utilization percentage (0-100+)
+                - status (str): "within_budget", "warning", or "breached"
+
+        Raises:
+            ValidationError: If parameters are invalid (negative values, invalid threshold)
+            APIError: If the SQL query or Databricks API returns an error
+
+        Examples:
+            >>> usage_admin = UsageAdmin()
+
+            >>> # Check workspace budgets for current month
+            >>> workspace_status = usage_admin.budget_status(
+            ...     dimension="workspace",
+            ...     period_days=30
+            ... )
+            >>> for status in workspace_status:
+            ...     if status["status"] == "breached":
+            ...         print(f"ALERT: {status['dimension_value']} is over budget!")
+            ...         print(f"  Budget: ${status['budget_amount']:.2f}")
+            ...         print(f"  Actual: ${status['actual_cost']:.2f}")
+
+            >>> # Check project budgets with custom warning threshold (90%)
+            >>> project_status = usage_admin.budget_status(
+            ...     dimension="project",
+            ...     period_days=30,
+            ...     warn_threshold=0.9
+            ... )
+
+            >>> # Find all entities with warnings or breaches
+            >>> alerts = [
+            ...     s for s in project_status
+            ...     if s["status"] in ["warning", "breached"]
+            ... ]
+
+        Note:
+            This method requires:
+            - A usage table with timestamp, cost, and dimension columns
+            - A budget table with columns:
+              - dimension_type: The dimension being budgeted (e.g., "workspace", "project")
+              - dimension_value: The specific entity (e.g., workspace ID, project name)
+              - budget_amount: The allocated budget amount
+              - period: Optional period identifier (e.g., "2024-01")
+        """
+        # Validate parameters
+        if period_days <= 0:
+            raise ValidationError("period_days must be positive")
+        if not 0 <= warn_threshold <= 1:
+            raise ValidationError("warn_threshold must be between 0 and 1")
+
+        logger.info(
+            f"Checking budget status for dimension '{dimension}' "
+            f"(period={period_days} days, warn_threshold={warn_threshold})"
+        )
+
+        # Calculate time window
+        now = datetime.now(timezone.utc)
+        start_time = now - timedelta(days=period_days)
+        start_time_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
+        end_time_str = now.strftime("%Y-%m-%d %H:%M:%S")
+
+        # Determine the column to use for grouping based on dimension
+        dimension_lower = dimension.lower()
+        if dimension_lower in ["workspace", "cluster", "job", "warehouse"]:
+            usage_column = f"{dimension_lower}_id"
+        else:
+            # For custom dimensions like "project" or "team", assume they're in tags
+            usage_column = f"tags['{dimension_lower}']"
+
+        # Build SQL query that joins usage with budget data
+        sql = f"""
+        WITH actual_costs AS (
+            SELECT
+                {usage_column} as dimension_value,
+                SUM(cost) as actual_cost
+            FROM {self.usage_table}
+            WHERE timestamp >= '{start_time_str}'
+              AND timestamp < '{end_time_str}'
+              AND {usage_column} IS NOT NULL
+            GROUP BY {usage_column}
+        ),
+        budgets AS (
+            SELECT
+                dimension_value,
+                budget_amount
+            FROM {self.budget_table}
+            WHERE dimension_type = '{dimension_lower}'
+        )
+        SELECT
+            COALESCE(b.dimension_value, a.dimension_value) as dimension_value,
+            COALESCE(a.actual_cost, 0.0) as actual_cost,
+            COALESCE(b.budget_amount, 0.0) as budget_amount
+        FROM budgets b
+        FULL OUTER JOIN actual_costs a
+            ON b.dimension_value = a.dimension_value
+        WHERE b.budget_amount IS NOT NULL OR a.actual_cost IS NOT NULL
+        ORDER BY actual_cost DESC
+        """
+
+        try:
+            logger.debug(f"Executing budget status query: {sql}")
+
+            # Execute SQL query
+            statement = self.ws.statement_execution.execute_statement(
+                warehouse_id=self.warehouse_id or self._get_default_warehouse_id(),
+                statement=sql,
+                wait_timeout="30s"
+            )
+
+            # Parse results and calculate status
+            budget_statuses = []
+            if statement.result and statement.result.data_array:
+                for row in statement.result.data_array:
+                    # row format: [dimension_value, actual_cost, budget_amount]
+                    dimension_value = str(row[0]) if row[0] is not None else "unknown"
+                    actual_cost = float(row[1]) if row[1] is not None else 0.0
+                    budget_amount = float(row[2]) if row[2] is not None else 0.0
+
+                    # Calculate utilization percentage
+                    if budget_amount > 0:
+                        utilization_pct = actual_cost / budget_amount
+                    else:
+                        # No budget defined - consider it breached if there's any cost
+                        utilization_pct = float('inf') if actual_cost > 0 else 0.0
+
+                    # Determine status
+                    if utilization_pct >= 1.0:
+                        status = "breached"
+                    elif utilization_pct >= warn_threshold:
+                        status = "warning"
+                    else:
+                        status = "within_budget"
+
+                    budget_status_dict = {
+                        "dimension_value": dimension_value,
+                        "actual_cost": actual_cost,
+                        "budget_amount": budget_amount,
+                        "utilization_pct": utilization_pct * 100,  # Convert to percentage
+                        "status": status,
+                    }
+                    budget_statuses.append(budget_status_dict)
+
+                    logger.debug(
+                        f"{dimension_value}: ${actual_cost:.2f} / ${budget_amount:.2f} "
+                        f"({utilization_pct*100:.1f}%) - {status}"
+                    )
+
+            logger.info(
+                f"Found {len(budget_statuses)} budget entries for dimension '{dimension}'"
+            )
+            return budget_statuses
+
+        except Exception as e:
+            logger.error(f"Error querying budget status: {e}")
+            raise APIError(f"Failed to query budget status: {e}")
+
+    def _get_default_warehouse_id(self) -> str:
+        """
+        Get the default SQL warehouse ID.
+
+        Returns:
+            The ID of the first available SQL warehouse.
+
+        Raises:
+            APIError: If no warehouse is available.
+        """
+        try:
+            warehouses = list(self.ws.warehouses.list())
+            if not warehouses:
+                raise APIError("No SQL warehouses available")
+            return warehouses[0].id
+        except Exception as e:
+            logger.error(f"Error getting default warehouse: {e}")
+            raise APIError(f"Failed to get default warehouse: {e}")
