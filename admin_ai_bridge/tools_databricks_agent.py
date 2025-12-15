@@ -1,0 +1,599 @@
+"""
+Databricks Agent Framework tools for Admin AI Bridge.
+
+This module provides tool specifications for all admin domains, compatible with
+the Databricks Agent Framework. All tools are READ-ONLY and safe for LLM usage.
+
+Each tool wraps exactly one method of the corresponding admin class and returns
+JSON-serializable outputs using Pydantic model_dump().
+"""
+
+from typing import List, Dict, Any
+
+from databricks.agents import ToolSpec
+
+from .config import AdminBridgeConfig
+from .jobs import JobsAdmin
+from .dbsql import DBSQLAdmin
+from .clusters import ClustersAdmin
+from .security import SecurityAdmin
+from .usage import UsageAdmin
+from .audit import AuditAdmin
+from .pipelines import PipelinesAdmin
+
+
+def jobs_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]:
+    """
+    Create Databricks Agent Framework tools for Jobs administration.
+
+    Args:
+        cfg: AdminBridgeConfig instance. If None, uses default credentials.
+
+    Returns:
+        List of ToolSpec objects for job-related operations.
+
+    Examples:
+        >>> from admin_ai_bridge import jobs_admin_tools
+        >>> tools = jobs_admin_tools()
+        >>> # Use with Databricks Agent Framework
+        >>> from databricks import agents
+        >>> agent_spec = agents.AgentSpec(tools=tools, ...)
+    """
+    jobs = JobsAdmin(cfg)
+
+    def _list_long_running_jobs(
+        min_duration_hours: float = 4.0,
+        lookback_hours: float = 24.0,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """
+        List job runs that have been running longer than the specified duration.
+
+        Args:
+            min_duration_hours: Minimum runtime in hours to be considered long-running (default: 4.0)
+            lookback_hours: How far back to search for runs in hours (default: 24.0)
+            limit: Maximum number of results to return (default: 20)
+
+        Returns:
+            List of job run summaries with job_id, job_name, run_id, state, duration, etc.
+        """
+        return [j.model_dump() for j in jobs.list_long_running_jobs(
+            min_duration_hours=min_duration_hours,
+            lookback_hours=lookback_hours,
+            limit=limit,
+        )]
+
+    def _list_failed_jobs(
+        lookback_hours: float = 24.0,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """
+        List job runs that have failed within the specified time window.
+
+        Args:
+            lookback_hours: How far back to search for failed runs in hours (default: 24.0)
+            limit: Maximum number of results to return (default: 20)
+
+        Returns:
+            List of failed job run summaries with job_id, job_name, run_id, state, etc.
+        """
+        return [j.model_dump() for j in jobs.list_failed_jobs(
+            lookback_hours=lookback_hours,
+            limit=limit,
+        )]
+
+    return [
+        ToolSpec.python(
+            func=_list_long_running_jobs,
+            name="list_long_running_jobs",
+            description=(
+                "List job runs that have been running longer than a specified number of hours. "
+                "Useful for identifying performance issues, stuck jobs, or workloads that need optimization. "
+                "Returns job details including duration, state, and timing information."
+            ),
+        ),
+        ToolSpec.python(
+            func=_list_failed_jobs,
+            name="list_failed_jobs",
+            description=(
+                "List job runs that have failed within a recent time window. "
+                "Helps identify recurring failures, troubleshoot issues, and monitor job reliability. "
+                "Returns failed job details including state and timing information."
+            ),
+        ),
+    ]
+
+
+def dbsql_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]:
+    """
+    Create Databricks Agent Framework tools for DBSQL administration.
+
+    Args:
+        cfg: AdminBridgeConfig instance. If None, uses default credentials.
+
+    Returns:
+        List of ToolSpec objects for DBSQL query history operations.
+
+    Examples:
+        >>> from admin_ai_bridge import dbsql_admin_tools
+        >>> tools = dbsql_admin_tools()
+    """
+    db = DBSQLAdmin(cfg)
+
+    def _top_slowest_queries(
+        lookback_hours: float = 24.0,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """
+        Return the top slowest SQL queries by execution duration.
+
+        Args:
+            lookback_hours: How far back to search for queries in hours (default: 24.0)
+            limit: Maximum number of results to return (default: 20)
+
+        Returns:
+            List of query entries with query_id, duration, user, warehouse, SQL text, etc.
+        """
+        return [q.model_dump() for q in db.top_slowest_queries(
+            lookback_hours=lookback_hours,
+            limit=limit,
+        )]
+
+    def _user_query_summary(
+        user_name: str,
+        lookback_hours: float = 24.0,
+    ) -> Dict[str, Any]:
+        """
+        Summarize query activity for a specific user.
+
+        Args:
+            user_name: Username to analyze (e.g., "user@company.com")
+            lookback_hours: How far back to analyze in hours (default: 24.0)
+
+        Returns:
+            Summary dictionary with total queries, success/failure counts, average duration,
+            failure rate, warehouses used, and time window information.
+        """
+        return db.user_query_summary(
+            user_name=user_name,
+            lookback_hours=lookback_hours,
+        )
+
+    return [
+        ToolSpec.python(
+            func=_top_slowest_queries,
+            name="top_slowest_queries",
+            description=(
+                "Return the top slowest SQL queries by execution duration in a time window. "
+                "Useful for identifying query performance bottlenecks and optimization opportunities. "
+                "Returns query details including duration, user, warehouse, and SQL text."
+            ),
+        ),
+        ToolSpec.python(
+            func=_user_query_summary,
+            name="user_query_summary",
+            description=(
+                "Summarize SQL query activity for a specific user within a time window. "
+                "Provides aggregate statistics including query counts, success/failure rates, "
+                "average duration, and warehouse usage. Useful for user activity analysis and troubleshooting."
+            ),
+        ),
+    ]
+
+
+def clusters_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]:
+    """
+    Create Databricks Agent Framework tools for Clusters administration.
+
+    Args:
+        cfg: AdminBridgeConfig instance. If None, uses default credentials.
+
+    Returns:
+        List of ToolSpec objects for cluster monitoring operations.
+
+    Examples:
+        >>> from admin_ai_bridge import clusters_admin_tools
+        >>> tools = clusters_admin_tools()
+    """
+    clusters = ClustersAdmin(cfg)
+
+    def _list_long_running_clusters(
+        min_duration_hours: float = 8.0,
+        lookback_hours: float = 24.0,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """
+        List clusters that have been running longer than the specified threshold.
+
+        Args:
+            min_duration_hours: Minimum runtime in hours to be considered long-running (default: 8.0)
+            lookback_hours: How far back to consider cluster start times in hours (default: 24.0)
+            limit: Maximum number of results to return (default: 50)
+
+        Returns:
+            List of cluster summaries with cluster_id, name, state, runtime, node types, etc.
+        """
+        return [c.model_dump() for c in clusters.list_long_running_clusters(
+            min_duration_hours=min_duration_hours,
+            lookback_hours=lookback_hours,
+            limit=limit,
+        )]
+
+    def _list_idle_clusters(
+        idle_hours: float = 2.0,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """
+        List running clusters that have been idle (no activity) for a specified time.
+
+        Args:
+            idle_hours: Number of hours of inactivity to be considered idle (default: 2.0)
+            limit: Maximum number of results to return (default: 50)
+
+        Returns:
+            List of idle cluster summaries with last activity time and cluster details.
+        """
+        return [c.model_dump() for c in clusters.list_idle_clusters(
+            idle_hours=idle_hours,
+            limit=limit,
+        )]
+
+    return [
+        ToolSpec.python(
+            func=_list_long_running_clusters,
+            name="list_long_running_clusters",
+            description=(
+                "List clusters that have been running longer than a specified number of hours. "
+                "Useful for cost optimization by identifying clusters left running unnecessarily "
+                "or finding long-running workloads that might benefit from optimization. "
+                "Returns cluster details including runtime, state, and configuration."
+            ),
+        ),
+        ToolSpec.python(
+            func=_list_idle_clusters,
+            name="list_idle_clusters",
+            description=(
+                "List running clusters that have been idle with no activity for a specified time. "
+                "Helps identify clusters consuming resources without performing useful work, "
+                "which are candidates for termination to reduce costs. "
+                "Returns cluster details including last activity time."
+            ),
+        ),
+    ]
+
+
+def security_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]:
+    """
+    Create Databricks Agent Framework tools for Security administration.
+
+    Args:
+        cfg: AdminBridgeConfig instance. If None, uses default credentials.
+
+    Returns:
+        List of ToolSpec objects for security and permissions operations.
+
+    Examples:
+        >>> from admin_ai_bridge import security_admin_tools
+        >>> tools = security_admin_tools()
+    """
+    sec = SecurityAdmin(cfg)
+
+    def _who_can_manage_job(job_id: int) -> List[Dict[str, Any]]:
+        """
+        Return principals with CAN_MANAGE permission on a specific job.
+
+        Args:
+            job_id: Unique identifier for the job
+
+        Returns:
+            List of permission entries with principal names and permission levels.
+        """
+        return [p.model_dump() for p in sec.who_can_manage_job(job_id)]
+
+    def _who_can_use_cluster(cluster_id: str) -> List[Dict[str, Any]]:
+        """
+        Return principals with permission to use a specific cluster.
+
+        Args:
+            cluster_id: Unique identifier for the cluster (e.g., "1234-567890-abc123")
+
+        Returns:
+            List of permission entries with principal names and permission levels
+            (CAN_ATTACH_TO, CAN_RESTART, CAN_MANAGE).
+        """
+        return [p.model_dump() for p in sec.who_can_use_cluster(cluster_id)]
+
+    return [
+        ToolSpec.python(
+            func=_who_can_manage_job,
+            name="who_can_manage_job",
+            description=(
+                "Return all users, groups, and service principals with CAN_MANAGE permission on a job. "
+                "Useful for understanding job ownership, troubleshooting access issues, "
+                "and auditing administrative permissions. "
+                "Returns principal names and permission levels."
+            ),
+        ),
+        ToolSpec.python(
+            func=_who_can_use_cluster,
+            name="who_can_use_cluster",
+            description=(
+                "Return all users, groups, and service principals with permission to use a cluster. "
+                "Includes CAN_ATTACH_TO, CAN_RESTART, and CAN_MANAGE permissions. "
+                "Useful for understanding cluster access, troubleshooting permission issues, "
+                "and auditing who can execute code on specific compute resources."
+            ),
+        ),
+    ]
+
+
+def usage_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]:
+    """
+    Create Databricks Agent Framework tools for Usage and Cost administration.
+
+    Args:
+        cfg: AdminBridgeConfig instance. If None, uses default credentials.
+
+    Returns:
+        List of ToolSpec objects for usage, cost, and budget operations.
+
+    Examples:
+        >>> from admin_ai_bridge import usage_admin_tools
+        >>> tools = usage_admin_tools()
+    """
+    usage = UsageAdmin(cfg)
+
+    def _top_cost_centers(
+        lookback_days: int = 7,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """
+        Return the top cost-contributing workloads (clusters, jobs, warehouses).
+
+        Args:
+            lookback_days: Number of days to look back for usage data (default: 7)
+            limit: Maximum number of results to return (default: 20)
+
+        Returns:
+            List of usage entries with scope, name, cost, DBUs consumed, and time period.
+        """
+        return [u.model_dump() for u in usage.top_cost_centers(
+            lookback_days=lookback_days,
+            limit=limit,
+        )]
+
+    def _cost_by_dimension(
+        dimension: str,
+        lookback_days: int = 30,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """
+        Aggregate cost and DBUs by a dimension for chargeback analysis.
+
+        Args:
+            dimension: Dimension to group by - "workspace", "cluster", "job", "warehouse",
+                      or "tag:KEY" (e.g., "tag:project", "tag:team")
+            lookback_days: Number of days to look back for usage data (default: 30)
+            limit: Maximum number of results to return (default: 100)
+
+        Returns:
+            List of usage entries with aggregated cost and DBUs for each dimension value.
+        """
+        return [u.model_dump() for u in usage.cost_by_dimension(
+            dimension=dimension,
+            lookback_days=lookback_days,
+            limit=limit,
+        )]
+
+    def _budget_status(
+        dimension: str,
+        period_days: int = 30,
+        warn_threshold: float = 0.8,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get budget vs actuals status for each entity in a dimension.
+
+        Args:
+            dimension: Dimension to check - "workspace", "project", "team", or custom dimension
+            period_days: Number of days in the budget period (default: 30)
+            warn_threshold: Utilization threshold for warning status, 0.0-1.0 (default: 0.8)
+
+        Returns:
+            List of budget status dictionaries with dimension_value, actual_cost, budget_amount,
+            utilization_pct, and status (within_budget, warning, or breached).
+        """
+        return usage.budget_status(
+            dimension=dimension,
+            period_days=period_days,
+            warn_threshold=warn_threshold,
+        )
+
+    return [
+        ToolSpec.python(
+            func=_top_cost_centers,
+            name="top_cost_centers",
+            description=(
+                "Return the top cost-contributing workloads (clusters, jobs, warehouses, workspaces) "
+                "over a specified time window. Useful for understanding where costs are coming from "
+                "and identifying optimization opportunities. "
+                "Returns cost and DBU consumption data sorted by highest cost first."
+            ),
+        ),
+        ToolSpec.python(
+            func=_cost_by_dimension,
+            name="cost_by_dimension",
+            description=(
+                "Aggregate cost and DBU consumption by a specific dimension for chargeback analysis. "
+                "Supports grouping by workspace, cluster, job, warehouse, or custom tags (e.g., project, team). "
+                "Essential for implementing chargeback models and understanding which teams or projects "
+                "are consuming resources. Returns aggregated cost data for each dimension value."
+            ),
+        ),
+        ToolSpec.python(
+            func=_budget_status,
+            name="budget_status",
+            description=(
+                "Compare actual costs against allocated budgets for workspaces, projects, or teams. "
+                "Returns budget utilization status (within_budget, warning, or breached) for each entity. "
+                "Critical for budget monitoring, detecting overspending early, and financial governance. "
+                "The warning threshold (default 80%) triggers alerts before budget is fully consumed."
+            ),
+        ),
+    ]
+
+
+def audit_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]:
+    """
+    Create Databricks Agent Framework tools for Audit log administration.
+
+    Args:
+        cfg: AdminBridgeConfig instance. If None, uses default credentials.
+
+    Returns:
+        List of ToolSpec objects for audit log operations.
+
+    Examples:
+        >>> from admin_ai_bridge import audit_admin_tools
+        >>> tools = audit_admin_tools()
+    """
+    audit = AuditAdmin(cfg)
+
+    def _failed_logins(
+        lookback_hours: float = 24.0,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """
+        Return failed login attempts from audit logs.
+
+        Args:
+            lookback_hours: How far back to search for failed logins in hours (default: 24.0)
+            limit: Maximum number of results to return (default: 100)
+
+        Returns:
+            List of audit events for failed login attempts with timestamps, users, and IPs.
+        """
+        return [e.model_dump() for e in audit.failed_logins(
+            lookback_hours=lookback_hours,
+            limit=limit,
+        )]
+
+    def _recent_admin_changes(
+        lookback_hours: float = 24.0,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """
+        Return recent administrative and permission change events.
+
+        Args:
+            lookback_hours: How far back to search for admin changes in hours (default: 24.0)
+            limit: Maximum number of results to return (default: 100)
+
+        Returns:
+            List of audit events for administrative actions like permission changes,
+            group membership updates, and workspace configuration changes.
+        """
+        return [e.model_dump() for e in audit.recent_admin_changes(
+            lookback_hours=lookback_hours,
+            limit=limit,
+        )]
+
+    return [
+        ToolSpec.python(
+            func=_failed_logins,
+            name="failed_logins",
+            description=(
+                "Return failed login attempts from audit logs within a time window. "
+                "Useful for detecting potential security threats, brute force attacks, "
+                "or investigating user access issues. "
+                "Returns event details including timestamps, usernames, and source IP addresses."
+            ),
+        ),
+        ToolSpec.python(
+            func=_recent_admin_changes,
+            name="recent_admin_changes",
+            description=(
+                "Return recent administrative and permission change events from audit logs. "
+                "Includes sensitive operations like admin group membership changes, "
+                "permission grants/revokes, service principal changes, and workspace configuration updates. "
+                "Essential for security monitoring, compliance auditing, and change tracking."
+            ),
+        ),
+    ]
+
+
+def pipelines_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]:
+    """
+    Create Databricks Agent Framework tools for Pipelines administration.
+
+    Args:
+        cfg: AdminBridgeConfig instance. If None, uses default credentials.
+
+    Returns:
+        List of ToolSpec objects for pipeline monitoring operations.
+
+    Examples:
+        >>> from admin_ai_bridge import pipelines_admin_tools
+        >>> tools = pipelines_admin_tools()
+    """
+    pipes = PipelinesAdmin(cfg)
+
+    def _list_lagging_pipelines(
+        max_lag_seconds: float = 600.0,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """
+        List streaming/Lakeflow pipelines whose lag exceeds a threshold.
+
+        Args:
+            max_lag_seconds: Maximum acceptable lag in seconds (default: 600.0 = 10 minutes)
+            limit: Maximum number of results to return (default: 50)
+
+        Returns:
+            List of pipeline status entries with lag information, state, and timing.
+        """
+        return [p.model_dump() for p in pipes.list_lagging_pipelines(
+            max_lag_seconds=max_lag_seconds,
+            limit=limit,
+        )]
+
+    def _list_failed_pipelines(
+        lookback_hours: float = 24.0,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """
+        List pipelines that have failed within a time window.
+
+        Args:
+            lookback_hours: How far back to search for failed pipelines in hours (default: 24.0)
+            limit: Maximum number of results to return (default: 50)
+
+        Returns:
+            List of pipeline status entries for failed pipelines with error messages.
+        """
+        return [p.model_dump() for p in pipes.list_failed_pipelines(
+            lookback_hours=lookback_hours,
+            limit=limit,
+        )]
+
+    return [
+        ToolSpec.python(
+            func=_list_lagging_pipelines,
+            name="list_lagging_pipelines",
+            description=(
+                "List Delta Live Tables (DLT) and streaming pipelines whose processing lag exceeds a threshold. "
+                "High lag indicates pipelines falling behind in processing input data, "
+                "which may indicate performance issues, insufficient resources, or data quality problems. "
+                "Returns pipeline details including lag duration and state."
+            ),
+        ),
+        ToolSpec.python(
+            func=_list_failed_pipelines,
+            name="list_failed_pipelines",
+            description=(
+                "List Delta Live Tables (DLT) and streaming pipelines that have failed recently. "
+                "Useful for troubleshooting pipeline issues, monitoring reliability, "
+                "and identifying recurring problems. "
+                "Returns pipeline details including failure state and error messages."
+            ),
+        ),
+    ]

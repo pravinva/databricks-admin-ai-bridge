@@ -14,6 +14,7 @@ from .schemas import (
     UsageEntry,
     AuditEvent,
     PipelineStatus,
+    BudgetStatus,
 )
 from .jobs import JobsAdmin
 from .dbsql import DBSQLAdmin
@@ -22,12 +23,23 @@ from .security import SecurityAdmin
 from .usage import UsageAdmin
 from .audit import AuditAdmin
 from .pipelines import PipelinesAdmin
+from .tools_databricks_agent import (
+    jobs_admin_tools,
+    dbsql_admin_tools,
+    clusters_admin_tools,
+    security_admin_tools,
+    usage_admin_tools,
+    audit_admin_tools,
+    pipelines_admin_tools,
+)
 
 __version__ = "0.1.0"
 
 __all__ = [
+    # Configuration
     "AdminBridgeConfig",
     "get_workspace_client",
+    # Schemas
     "JobRunSummary",
     "QueryHistoryEntry",
     "ClusterSummary",
@@ -35,6 +47,8 @@ __all__ = [
     "UsageEntry",
     "AuditEvent",
     "PipelineStatus",
+    "BudgetStatus",
+    # Admin Classes
     "JobsAdmin",
     "DBSQLAdmin",
     "ClustersAdmin",
@@ -42,4 +56,12 @@ __all__ = [
     "UsageAdmin",
     "AuditAdmin",
     "PipelinesAdmin",
+    # Databricks Agent Framework Tools
+    "jobs_admin_tools",
+    "dbsql_admin_tools",
+    "clusters_admin_tools",
+    "security_admin_tools",
+    "usage_admin_tools",
+    "audit_admin_tools",
+    "pipelines_admin_tools",
 ]
