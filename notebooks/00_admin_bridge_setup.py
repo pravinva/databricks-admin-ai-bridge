@@ -27,8 +27,16 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install databricks-sdk pydantic
-# MAGIC dbutils.library.restartPython()
+# Install dependencies and the admin_ai_bridge library
+# Option 1: Install from local repo (if cloned in workspace)
+%pip install --upgrade databricks-sdk pydantic
+%pip install -e /Workspace/Repos/<your-repo-path>/databricks-admin-ai-bridge
+
+# Option 2: Install from GitHub (if not cloned)
+# %pip install --upgrade databricks-sdk pydantic
+# %pip install git+https://github.com/pravinva/databricks-admin-ai-bridge.git
+
+dbutils.library.restartPython()
 
 # COMMAND ----------
 
@@ -40,18 +48,16 @@
 
 # COMMAND ----------
 
-from admin_ai_bridge import (
-    AdminBridgeConfig,
-    get_workspace_client,
-    JobsAdmin,
-    DBSQLAdmin,
-    ClustersAdmin,
-    SecurityAdmin,
-    UsageAdmin,
-    AuditAdmin,
-    PipelinesAdmin,
-    __version__
-)
+from admin_ai_bridge.config import AdminBridgeConfig, get_workspace_client
+from admin_ai_bridge.jobs import JobsAdmin
+from admin_ai_bridge.dbsql import DBSQLAdmin
+from admin_ai_bridge.clusters import ClustersAdmin
+from admin_ai_bridge.security import SecurityAdmin
+from admin_ai_bridge.usage import UsageAdmin
+from admin_ai_bridge.audit import AuditAdmin
+from admin_ai_bridge.pipelines import PipelinesAdmin
+import admin_ai_bridge
+__version__ = admin_ai_bridge.__version__
 from databricks.sdk import WorkspaceClient
 
 print(f"Admin AI Bridge version: {__version__}")
