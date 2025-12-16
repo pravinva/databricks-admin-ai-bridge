@@ -190,7 +190,7 @@ print(f"  ... and {len(all_tools) - 5} more tools")
 
 import mlflow
 from langchain_community.chat_models import ChatDatabricks
-from langchain.tools import StructuredTool
+from langchain_core.tools import StructuredTool
 from langchain.agents import initialize_agent, AgentType
 
 # Set MLflow experiment
