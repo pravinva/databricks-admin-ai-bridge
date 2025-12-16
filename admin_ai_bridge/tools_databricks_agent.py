@@ -1,16 +1,29 @@
 """
-Databricks Agent Framework tools for Admin AI Bridge.
+Databricks Agent tools for Admin AI Bridge.
 
-This module provides tool specifications for all admin domains, compatible with
-the Databricks Agent Framework. All tools are READ-ONLY and safe for LLM usage.
+This module provides plain Python functions for all admin domains that can be used
+with Databricks agents, MLflow agents, or registered as Unity Catalog functions.
 
-Each tool wraps exactly one method of the corresponding admin class and returns
-JSON-serializable outputs using Pydantic model_dump().
+All tools are READ-ONLY and safe for LLM usage. Each tool wraps exactly one method
+of the corresponding admin class and returns JSON-serializable outputs using
+Pydantic model_dump().
+
+Usage with Databricks/MLflow agents:
+    >>> from admin_ai_bridge import jobs_admin_tools
+    >>> tools = jobs_admin_tools()
+    >>> # tools is a list of Python functions
+    >>> # Register with MLflow or use with Databricks agents
+    >>> import mlflow
+    >>> mlflow.models.set_model(tools=tools)
+
+Usage with Unity Catalog:
+    >>> from databricks import sql
+    >>> # Register functions as UC functions
+    >>> for tool in jobs_admin_tools():
+    >>>     # Register tool as UC function
 """
 
-from typing import List, Dict, Any
-
-from databricks.agents import ToolSpec
+from typing import List, Dict, Any, Callable
 
 from .config import AdminBridgeConfig
 from .jobs import JobsAdmin
@@ -22,32 +35,33 @@ from .audit import AuditAdmin
 from .pipelines import PipelinesAdmin
 
 
-def jobs_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]:
+def jobs_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[Callable]:
     """
-    Create Databricks Agent Framework tools for Jobs administration.
+    Create Python functions for Jobs administration to use with Databricks agents.
+
+    These functions can be registered with MLflow agents or used with Unity Catalog.
 
     Args:
         cfg: AdminBridgeConfig instance. If None, uses default credentials.
 
     Returns:
-        List of ToolSpec objects for job-related operations.
+        List of Python callable functions for job-related operations.
 
     Examples:
         >>> from admin_ai_bridge import jobs_admin_tools
         >>> tools = jobs_admin_tools()
-        >>> # Use with Databricks Agent Framework
-        >>> from databricks import agents
-        >>> agent_spec = agents.AgentSpec(tools=tools, ...)
+        >>> # Use with MLflow or Databricks agents
+        >>> for tool in tools:
+        >>>     print(tool.__name__, tool.__doc__)
     """
     jobs = JobsAdmin(cfg)
 
-    def _list_long_running_jobs(
+    def list_long_running_jobs(
         min_duration_hours: float = 4.0,
         lookback_hours: float = 24.0,
         limit: int = 20,
     ) -> List[Dict[str, Any]]:
-        """
-        List job runs that have been running longer than the specified duration.
+        """List job runs that have been running longer than a specified number of hours. Useful for identifying performance issues, stuck jobs, or workloads that need optimization. Returns job details including duration, state, and timing information.
 
         Args:
             min_duration_hours: Minimum runtime in hours to be considered long-running (default: 4.0)
@@ -63,12 +77,11 @@ def jobs_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]:
             limit=limit,
         )]
 
-    def _list_failed_jobs(
+    def list_failed_jobs(
         lookback_hours: float = 24.0,
         limit: int = 20,
     ) -> List[Dict[str, Any]]:
-        """
-        List job runs that have failed within the specified time window.
+        """List job runs that have failed within a recent time window. Helps identify recurring failures, troubleshoot issues, and monitor job reliability. Returns failed job details including state and timing information.
 
         Args:
             lookback_hours: How far back to search for failed runs in hours (default: 24.0)
@@ -82,37 +95,20 @@ def jobs_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]:
             limit=limit,
         )]
 
-    return [
-        ToolSpec.python(
-            func=_list_long_running_jobs,
-            name="list_long_running_jobs",
-            description=(
-                "List job runs that have been running longer than a specified number of hours. "
-                "Useful for identifying performance issues, stuck jobs, or workloads that need optimization. "
-                "Returns job details including duration, state, and timing information."
-            ),
-        ),
-        ToolSpec.python(
-            func=_list_failed_jobs,
-            name="list_failed_jobs",
-            description=(
-                "List job runs that have failed within a recent time window. "
-                "Helps identify recurring failures, troubleshoot issues, and monitor job reliability. "
-                "Returns failed job details including state and timing information."
-            ),
-        ),
-    ]
+    return [list_long_running_jobs, list_failed_jobs]
 
 
-def dbsql_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]:
+def dbsql_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[Callable]:
     """
-    Create Databricks Agent Framework tools for DBSQL administration.
+    Create Python functions for DBSQL administration to use with Databricks agents.
+
+    These functions can be registered with MLflow agents or used with Unity Catalog.
 
     Args:
         cfg: AdminBridgeConfig instance. If None, uses default credentials.
 
     Returns:
-        List of ToolSpec objects for DBSQL query history operations.
+        List of Python callable functions for DBSQL query history operations.
 
     Examples:
         >>> from admin_ai_bridge import dbsql_admin_tools
@@ -120,12 +116,11 @@ def dbsql_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]:
     """
     db = DBSQLAdmin(cfg)
 
-    def _top_slowest_queries(
+    def top_slowest_queries(
         lookback_hours: float = 24.0,
         limit: int = 20,
     ) -> List[Dict[str, Any]]:
-        """
-        Return the top slowest SQL queries by execution duration.
+        """Return the top slowest SQL queries by execution duration in a time window. Useful for identifying query performance bottlenecks and optimization opportunities. Returns query details including duration, user, warehouse, and SQL text.
 
         Args:
             lookback_hours: How far back to search for queries in hours (default: 24.0)
@@ -139,12 +134,11 @@ def dbsql_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]:
             limit=limit,
         )]
 
-    def _user_query_summary(
+    def user_query_summary(
         user_name: str,
         lookback_hours: float = 24.0,
     ) -> Dict[str, Any]:
-        """
-        Summarize query activity for a specific user.
+        """Summarize SQL query activity for a specific user within a time window. Provides aggregate statistics including query counts, success/failure rates, average duration, and warehouse usage. Useful for user activity analysis and troubleshooting.
 
         Args:
             user_name: Username to analyze (e.g., "user@company.com")
@@ -159,37 +153,20 @@ def dbsql_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]:
             lookback_hours=lookback_hours,
         )
 
-    return [
-        ToolSpec.python(
-            func=_top_slowest_queries,
-            name="top_slowest_queries",
-            description=(
-                "Return the top slowest SQL queries by execution duration in a time window. "
-                "Useful for identifying query performance bottlenecks and optimization opportunities. "
-                "Returns query details including duration, user, warehouse, and SQL text."
-            ),
-        ),
-        ToolSpec.python(
-            func=_user_query_summary,
-            name="user_query_summary",
-            description=(
-                "Summarize SQL query activity for a specific user within a time window. "
-                "Provides aggregate statistics including query counts, success/failure rates, "
-                "average duration, and warehouse usage. Useful for user activity analysis and troubleshooting."
-            ),
-        ),
-    ]
+    return [top_slowest_queries, user_query_summary]
 
 
-def clusters_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]:
+def clusters_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[Callable]:
     """
-    Create Databricks Agent Framework tools for Clusters administration.
+    Create Python functions for Clusters administration to use with Databricks agents.
+
+    These functions can be registered with MLflow agents or used with Unity Catalog.
 
     Args:
         cfg: AdminBridgeConfig instance. If None, uses default credentials.
 
     Returns:
-        List of ToolSpec objects for cluster monitoring operations.
+        List of Python callable functions for cluster monitoring operations.
 
     Examples:
         >>> from admin_ai_bridge import clusters_admin_tools
@@ -197,13 +174,12 @@ def clusters_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]
     """
     clusters = ClustersAdmin(cfg)
 
-    def _list_long_running_clusters(
+    def list_long_running_clusters(
         min_duration_hours: float = 8.0,
         lookback_hours: float = 24.0,
         limit: int = 50,
     ) -> List[Dict[str, Any]]:
-        """
-        List clusters that have been running longer than the specified threshold.
+        """List clusters that have been running longer than a specified number of hours. Useful for cost optimization by identifying clusters left running unnecessarily or finding long-running workloads that might benefit from optimization. Returns cluster details including runtime, state, and configuration.
 
         Args:
             min_duration_hours: Minimum runtime in hours to be considered long-running (default: 8.0)
@@ -219,12 +195,11 @@ def clusters_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]
             limit=limit,
         )]
 
-    def _list_idle_clusters(
+    def list_idle_clusters(
         idle_hours: float = 2.0,
         limit: int = 50,
     ) -> List[Dict[str, Any]]:
-        """
-        List running clusters that have been idle (no activity) for a specified time.
+        """List running clusters that have been idle with no activity for a specified time. Helps identify clusters consuming resources without performing useful work, which are candidates for termination to reduce costs. Returns cluster details including last activity time.
 
         Args:
             idle_hours: Number of hours of inactivity to be considered idle (default: 2.0)
@@ -238,39 +213,20 @@ def clusters_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]
             limit=limit,
         )]
 
-    return [
-        ToolSpec.python(
-            func=_list_long_running_clusters,
-            name="list_long_running_clusters",
-            description=(
-                "List clusters that have been running longer than a specified number of hours. "
-                "Useful for cost optimization by identifying clusters left running unnecessarily "
-                "or finding long-running workloads that might benefit from optimization. "
-                "Returns cluster details including runtime, state, and configuration."
-            ),
-        ),
-        ToolSpec.python(
-            func=_list_idle_clusters,
-            name="list_idle_clusters",
-            description=(
-                "List running clusters that have been idle with no activity for a specified time. "
-                "Helps identify clusters consuming resources without performing useful work, "
-                "which are candidates for termination to reduce costs. "
-                "Returns cluster details including last activity time."
-            ),
-        ),
-    ]
+    return [list_long_running_clusters, list_idle_clusters]
 
 
-def security_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]:
+def security_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[Callable]:
     """
-    Create Databricks Agent Framework tools for Security administration.
+    Create Python functions for Security administration to use with Databricks agents.
+
+    These functions can be registered with MLflow agents or used with Unity Catalog.
 
     Args:
         cfg: AdminBridgeConfig instance. If None, uses default credentials.
 
     Returns:
-        List of ToolSpec objects for security and permissions operations.
+        List of Python callable functions for security and permissions operations.
 
     Examples:
         >>> from admin_ai_bridge import security_admin_tools
@@ -278,9 +234,8 @@ def security_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]
     """
     sec = SecurityAdmin(cfg)
 
-    def _who_can_manage_job(job_id: int) -> List[Dict[str, Any]]:
-        """
-        Return principals with CAN_MANAGE permission on a specific job.
+    def who_can_manage_job(job_id: int) -> List[Dict[str, Any]]:
+        """Return all users, groups, and service principals with CAN_MANAGE permission on a job. Useful for understanding job ownership, troubleshooting access issues, and auditing administrative permissions. Returns principal names and permission levels.
 
         Args:
             job_id: Unique identifier for the job
@@ -290,9 +245,8 @@ def security_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]
         """
         return [p.model_dump() for p in sec.who_can_manage_job(job_id)]
 
-    def _who_can_use_cluster(cluster_id: str) -> List[Dict[str, Any]]:
-        """
-        Return principals with permission to use a specific cluster.
+    def who_can_use_cluster(cluster_id: str) -> List[Dict[str, Any]]:
+        """Return all users, groups, and service principals with permission to use a cluster. Includes CAN_ATTACH_TO, CAN_RESTART, and CAN_MANAGE permissions. Useful for understanding cluster access, troubleshooting permission issues, and auditing who can execute code on specific compute resources.
 
         Args:
             cluster_id: Unique identifier for the cluster (e.g., "1234-567890-abc123")
@@ -303,39 +257,20 @@ def security_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]
         """
         return [p.model_dump() for p in sec.who_can_use_cluster(cluster_id)]
 
-    return [
-        ToolSpec.python(
-            func=_who_can_manage_job,
-            name="who_can_manage_job",
-            description=(
-                "Return all users, groups, and service principals with CAN_MANAGE permission on a job. "
-                "Useful for understanding job ownership, troubleshooting access issues, "
-                "and auditing administrative permissions. "
-                "Returns principal names and permission levels."
-            ),
-        ),
-        ToolSpec.python(
-            func=_who_can_use_cluster,
-            name="who_can_use_cluster",
-            description=(
-                "Return all users, groups, and service principals with permission to use a cluster. "
-                "Includes CAN_ATTACH_TO, CAN_RESTART, and CAN_MANAGE permissions. "
-                "Useful for understanding cluster access, troubleshooting permission issues, "
-                "and auditing who can execute code on specific compute resources."
-            ),
-        ),
-    ]
+    return [who_can_manage_job, who_can_use_cluster]
 
 
-def usage_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]:
+def usage_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[Callable]:
     """
-    Create Databricks Agent Framework tools for Usage and Cost administration.
+    Create Python functions for Usage and Cost administration to use with Databricks agents.
+
+    These functions can be registered with MLflow agents or used with Unity Catalog.
 
     Args:
         cfg: AdminBridgeConfig instance. If None, uses default credentials.
 
     Returns:
-        List of ToolSpec objects for usage, cost, and budget operations.
+        List of Python callable functions for usage, cost, and budget operations.
 
     Examples:
         >>> from admin_ai_bridge import usage_admin_tools
@@ -343,12 +278,11 @@ def usage_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]:
     """
     usage = UsageAdmin(cfg)
 
-    def _top_cost_centers(
+    def top_cost_centers(
         lookback_days: int = 7,
         limit: int = 20,
     ) -> List[Dict[str, Any]]:
-        """
-        Return the top cost-contributing workloads (clusters, jobs, warehouses).
+        """Return the top cost-contributing workloads (clusters, jobs, warehouses, workspaces) over a specified time window. Useful for understanding where costs are coming from and identifying optimization opportunities. Returns cost and DBU consumption data sorted by highest cost first.
 
         Args:
             lookback_days: Number of days to look back for usage data (default: 7)
@@ -362,13 +296,12 @@ def usage_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]:
             limit=limit,
         )]
 
-    def _cost_by_dimension(
+    def cost_by_dimension(
         dimension: str,
         lookback_days: int = 30,
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
-        """
-        Aggregate cost and DBUs by a dimension for chargeback analysis.
+        """Aggregate cost and DBU consumption by a specific dimension for chargeback analysis. Supports grouping by workspace, cluster, job, warehouse, or custom tags (e.g., project, team). Essential for implementing chargeback models and understanding which teams or projects are consuming resources. Returns aggregated cost data for each dimension value.
 
         Args:
             dimension: Dimension to group by - "workspace", "cluster", "job", "warehouse",
@@ -385,13 +318,12 @@ def usage_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]:
             limit=limit,
         )]
 
-    def _budget_status(
+    def budget_status(
         dimension: str,
         period_days: int = 30,
         warn_threshold: float = 0.8,
     ) -> List[Dict[str, Any]]:
-        """
-        Get budget vs actuals status for each entity in a dimension.
+        """Compare actual costs against allocated budgets for workspaces, projects, or teams. Returns budget utilization status (within_budget, warning, or breached) for each entity. Critical for budget monitoring, detecting overspending early, and financial governance. The warning threshold (default 80%) triggers alerts before budget is fully consumed.
 
         Args:
             dimension: Dimension to check - "workspace", "project", "team", or custom dimension
@@ -408,49 +340,20 @@ def usage_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]:
             warn_threshold=warn_threshold,
         )
 
-    return [
-        ToolSpec.python(
-            func=_top_cost_centers,
-            name="top_cost_centers",
-            description=(
-                "Return the top cost-contributing workloads (clusters, jobs, warehouses, workspaces) "
-                "over a specified time window. Useful for understanding where costs are coming from "
-                "and identifying optimization opportunities. "
-                "Returns cost and DBU consumption data sorted by highest cost first."
-            ),
-        ),
-        ToolSpec.python(
-            func=_cost_by_dimension,
-            name="cost_by_dimension",
-            description=(
-                "Aggregate cost and DBU consumption by a specific dimension for chargeback analysis. "
-                "Supports grouping by workspace, cluster, job, warehouse, or custom tags (e.g., project, team). "
-                "Essential for implementing chargeback models and understanding which teams or projects "
-                "are consuming resources. Returns aggregated cost data for each dimension value."
-            ),
-        ),
-        ToolSpec.python(
-            func=_budget_status,
-            name="budget_status",
-            description=(
-                "Compare actual costs against allocated budgets for workspaces, projects, or teams. "
-                "Returns budget utilization status (within_budget, warning, or breached) for each entity. "
-                "Critical for budget monitoring, detecting overspending early, and financial governance. "
-                "The warning threshold (default 80%) triggers alerts before budget is fully consumed."
-            ),
-        ),
-    ]
+    return [top_cost_centers, cost_by_dimension, budget_status]
 
 
-def audit_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]:
+def audit_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[Callable]:
     """
-    Create Databricks Agent Framework tools for Audit log administration.
+    Create Python functions for Audit log administration to use with Databricks agents.
+
+    These functions can be registered with MLflow agents or used with Unity Catalog.
 
     Args:
         cfg: AdminBridgeConfig instance. If None, uses default credentials.
 
     Returns:
-        List of ToolSpec objects for audit log operations.
+        List of Python callable functions for audit log operations.
 
     Examples:
         >>> from admin_ai_bridge import audit_admin_tools
@@ -458,12 +361,11 @@ def audit_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]:
     """
     audit = AuditAdmin(cfg)
 
-    def _failed_logins(
+    def failed_logins(
         lookback_hours: float = 24.0,
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
-        """
-        Return failed login attempts from audit logs.
+        """Return failed login attempts from audit logs within a time window. Useful for detecting potential security threats, brute force attacks, or investigating user access issues. Returns event details including timestamps, usernames, and source IP addresses.
 
         Args:
             lookback_hours: How far back to search for failed logins in hours (default: 24.0)
@@ -477,12 +379,11 @@ def audit_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]:
             limit=limit,
         )]
 
-    def _recent_admin_changes(
+    def recent_admin_changes(
         lookback_hours: float = 24.0,
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
-        """
-        Return recent administrative and permission change events.
+        """Return recent administrative and permission change events from audit logs. Includes sensitive operations like admin group membership changes, permission grants/revokes, service principal changes, and workspace configuration updates. Essential for security monitoring, compliance auditing, and change tracking.
 
         Args:
             lookback_hours: How far back to search for admin changes in hours (default: 24.0)
@@ -497,39 +398,20 @@ def audit_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]:
             limit=limit,
         )]
 
-    return [
-        ToolSpec.python(
-            func=_failed_logins,
-            name="failed_logins",
-            description=(
-                "Return failed login attempts from audit logs within a time window. "
-                "Useful for detecting potential security threats, brute force attacks, "
-                "or investigating user access issues. "
-                "Returns event details including timestamps, usernames, and source IP addresses."
-            ),
-        ),
-        ToolSpec.python(
-            func=_recent_admin_changes,
-            name="recent_admin_changes",
-            description=(
-                "Return recent administrative and permission change events from audit logs. "
-                "Includes sensitive operations like admin group membership changes, "
-                "permission grants/revokes, service principal changes, and workspace configuration updates. "
-                "Essential for security monitoring, compliance auditing, and change tracking."
-            ),
-        ),
-    ]
+    return [failed_logins, recent_admin_changes]
 
 
-def pipelines_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec]:
+def pipelines_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[Callable]:
     """
-    Create Databricks Agent Framework tools for Pipelines administration.
+    Create Python functions for Pipelines administration to use with Databricks agents.
+
+    These functions can be registered with MLflow agents or used with Unity Catalog.
 
     Args:
         cfg: AdminBridgeConfig instance. If None, uses default credentials.
 
     Returns:
-        List of ToolSpec objects for pipeline monitoring operations.
+        List of Python callable functions for pipeline monitoring operations.
 
     Examples:
         >>> from admin_ai_bridge import pipelines_admin_tools
@@ -537,12 +419,11 @@ def pipelines_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec
     """
     pipes = PipelinesAdmin(cfg)
 
-    def _list_lagging_pipelines(
+    def list_lagging_pipelines(
         max_lag_seconds: float = 600.0,
         limit: int = 50,
     ) -> List[Dict[str, Any]]:
-        """
-        List streaming/Lakeflow pipelines whose lag exceeds a threshold.
+        """List Delta Live Tables (DLT) and streaming pipelines whose processing lag exceeds a threshold. High lag indicates pipelines falling behind in processing input data, which may indicate performance issues, insufficient resources, or data quality problems. Returns pipeline details including lag duration and state.
 
         Args:
             max_lag_seconds: Maximum acceptable lag in seconds (default: 600.0 = 10 minutes)
@@ -556,12 +437,11 @@ def pipelines_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec
             limit=limit,
         )]
 
-    def _list_failed_pipelines(
+    def list_failed_pipelines(
         lookback_hours: float = 24.0,
         limit: int = 50,
     ) -> List[Dict[str, Any]]:
-        """
-        List pipelines that have failed within a time window.
+        """List Delta Live Tables (DLT) and streaming pipelines that have failed recently. Useful for troubleshooting pipeline issues, monitoring reliability, and identifying recurring problems. Returns pipeline details including failure state and error messages.
 
         Args:
             lookback_hours: How far back to search for failed pipelines in hours (default: 24.0)
@@ -575,25 +455,4 @@ def pipelines_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[ToolSpec
             limit=limit,
         )]
 
-    return [
-        ToolSpec.python(
-            func=_list_lagging_pipelines,
-            name="list_lagging_pipelines",
-            description=(
-                "List Delta Live Tables (DLT) and streaming pipelines whose processing lag exceeds a threshold. "
-                "High lag indicates pipelines falling behind in processing input data, "
-                "which may indicate performance issues, insufficient resources, or data quality problems. "
-                "Returns pipeline details including lag duration and state."
-            ),
-        ),
-        ToolSpec.python(
-            func=_list_failed_pipelines,
-            name="list_failed_pipelines",
-            description=(
-                "List Delta Live Tables (DLT) and streaming pipelines that have failed recently. "
-                "Useful for troubleshooting pipeline issues, monitoring reliability, "
-                "and identifying recurring problems. "
-                "Returns pipeline details including failure state and error messages."
-            ),
-        ),
-    ]
+    return [list_lagging_pipelines, list_failed_pipelines]

@@ -1,9 +1,9 @@
 """
-Unit tests for Databricks Agent Framework tools.
+Unit tests for Databricks Agent tools.
 
 Tests verify that all tool functions:
-- Return the correct ToolSpec structure
-- Have proper names and descriptions
+- Return plain Python callable functions
+- Have proper names and docstrings
 - Can be invoked with mocked admin classes
 - Return JSON-serializable outputs
 """
@@ -11,8 +11,7 @@ Tests verify that all tool functions:
 import pytest
 from unittest.mock import Mock, patch
 from datetime import datetime, timezone
-
-from databricks.agents import ToolSpec
+from typing import Callable
 
 from admin_ai_bridge.tools_databricks_agent import (
     jobs_admin_tools,
@@ -38,29 +37,29 @@ class TestJobsAdminTools:
     """Tests for jobs_admin_tools."""
 
     def test_tool_list_structure(self):
-        """Test that jobs_admin_tools returns a list of ToolSpec objects."""
+        """Test that jobs_admin_tools returns a list of callable functions."""
         tools = jobs_admin_tools()
 
         assert isinstance(tools, list)
         assert len(tools) == 2
-        assert all(isinstance(tool, ToolSpec) for tool in tools)
+        assert all(callable(tool) for tool in tools)
 
     def test_tool_names(self):
         """Test that job tools have the expected names."""
         tools = jobs_admin_tools()
-        tool_names = [tool.name for tool in tools]
+        tool_names = [tool.__name__ for tool in tools]
 
         assert "list_long_running_jobs" in tool_names
         assert "list_failed_jobs" in tool_names
 
     def test_tool_descriptions(self):
-        """Test that job tools have meaningful descriptions."""
+        """Test that job tools have meaningful docstrings."""
         tools = jobs_admin_tools()
 
         for tool in tools:
-            assert tool.description is not None
-            assert len(tool.description) > 50  # Should be descriptive
-            assert any(keyword in tool.description.lower() for keyword in ["job", "run"])
+            assert tool.__doc__ is not None
+            assert len(tool.__doc__) > 50  # Should be descriptive
+            assert any(keyword in tool.__doc__.lower() for keyword in ["job", "run"])
 
     @patch('admin_ai_bridge.tools_databricks_agent.JobsAdmin')
     def test_list_long_running_jobs_invocation(self, mock_jobs_admin_class):
@@ -84,10 +83,10 @@ class TestJobsAdminTools:
 
         # Get tools and find the specific tool
         tools = jobs_admin_tools()
-        long_running_tool = next(t for t in tools if t.name == "list_long_running_jobs")
+        long_running_tool = next(t for t in tools if t.__name__ == "list_long_running_jobs")
 
-        # Invoke the tool function
-        result = long_running_tool.func(min_duration_hours=4.0, lookback_hours=24.0, limit=20)
+        # Invoke the tool function directly
+        result = long_running_tool(min_duration_hours=4.0, lookback_hours=24.0, limit=20)
 
         # Verify
         assert isinstance(result, list)
@@ -124,9 +123,9 @@ class TestJobsAdminTools:
         mock_jobs_admin.list_failed_jobs.return_value = [mock_run]
 
         tools = jobs_admin_tools()
-        failed_tool = next(t for t in tools if t.name == "list_failed_jobs")
+        failed_tool = next(t for t in tools if t.__name__ == "list_failed_jobs")
 
-        result = failed_tool.func(lookback_hours=24.0, limit=20)
+        result = failed_tool(lookback_hours=24.0, limit=20)
 
         assert isinstance(result, list)
         assert len(result) == 1
@@ -142,12 +141,12 @@ class TestDBSQLAdminTools:
 
         assert isinstance(tools, list)
         assert len(tools) == 2
-        assert all(isinstance(tool, ToolSpec) for tool in tools)
+        assert all(callable(tool) for tool in tools)
 
     def test_tool_names(self):
         """Test that DBSQL tools have the expected names."""
         tools = dbsql_admin_tools()
-        tool_names = [tool.name for tool in tools]
+        tool_names = [tool.__name__ for tool in tools]
 
         assert "top_slowest_queries" in tool_names
         assert "user_query_summary" in tool_names
@@ -171,9 +170,9 @@ class TestDBSQLAdminTools:
         mock_dbsql_admin.top_slowest_queries.return_value = [mock_query]
 
         tools = dbsql_admin_tools()
-        slow_queries_tool = next(t for t in tools if t.name == "top_slowest_queries")
+        slow_queries_tool = next(t for t in tools if t.__name__ == "top_slowest_queries")
 
-        result = slow_queries_tool.func(lookback_hours=24.0, limit=20)
+        result = slow_queries_tool(lookback_hours=24.0, limit=20)
 
         assert isinstance(result, list)
         assert len(result) == 1
@@ -197,9 +196,9 @@ class TestDBSQLAdminTools:
         mock_dbsql_admin.user_query_summary.return_value = mock_summary
 
         tools = dbsql_admin_tools()
-        summary_tool = next(t for t in tools if t.name == "user_query_summary")
+        summary_tool = next(t for t in tools if t.__name__ == "user_query_summary")
 
-        result = summary_tool.func(user_name="test@example.com", lookback_hours=24.0)
+        result = summary_tool(user_name="test@example.com", lookback_hours=24.0)
 
         assert isinstance(result, dict)
         assert result["total_queries"] == 100
@@ -215,12 +214,12 @@ class TestClustersAdminTools:
 
         assert isinstance(tools, list)
         assert len(tools) == 2
-        assert all(isinstance(tool, ToolSpec) for tool in tools)
+        assert all(callable(tool) for tool in tools)
 
     def test_tool_names(self):
         """Test that cluster tools have the expected names."""
         tools = clusters_admin_tools()
-        tool_names = [tool.name for tool in tools]
+        tool_names = [tool.__name__ for tool in tools]
 
         assert "list_long_running_clusters" in tool_names
         assert "list_idle_clusters" in tool_names
@@ -246,9 +245,9 @@ class TestClustersAdminTools:
         mock_clusters_admin.list_long_running_clusters.return_value = [mock_cluster]
 
         tools = clusters_admin_tools()
-        long_running_tool = next(t for t in tools if t.name == "list_long_running_clusters")
+        long_running_tool = next(t for t in tools if t.__name__ == "list_long_running_clusters")
 
-        result = long_running_tool.func(min_duration_hours=8.0, lookback_hours=24.0, limit=50)
+        result = long_running_tool(min_duration_hours=8.0, lookback_hours=24.0, limit=50)
 
         assert isinstance(result, list)
         assert len(result) == 1
@@ -265,12 +264,12 @@ class TestSecurityAdminTools:
 
         assert isinstance(tools, list)
         assert len(tools) == 2
-        assert all(isinstance(tool, ToolSpec) for tool in tools)
+        assert all(callable(tool) for tool in tools)
 
     def test_tool_names(self):
         """Test that security tools have the expected names."""
         tools = security_admin_tools()
-        tool_names = [tool.name for tool in tools]
+        tool_names = [tool.__name__ for tool in tools]
 
         assert "who_can_manage_job" in tool_names
         assert "who_can_use_cluster" in tool_names
@@ -290,9 +289,9 @@ class TestSecurityAdminTools:
         mock_security_admin.who_can_manage_job.return_value = [mock_permission]
 
         tools = security_admin_tools()
-        manage_job_tool = next(t for t in tools if t.name == "who_can_manage_job")
+        manage_job_tool = next(t for t in tools if t.__name__ == "who_can_manage_job")
 
-        result = manage_job_tool.func(job_id=123)
+        result = manage_job_tool(job_id=123)
 
         assert isinstance(result, list)
         assert len(result) == 1
@@ -309,12 +308,12 @@ class TestUsageAdminTools:
 
         assert isinstance(tools, list)
         assert len(tools) == 3  # top_cost_centers, cost_by_dimension, budget_status
-        assert all(isinstance(tool, ToolSpec) for tool in tools)
+        assert all(callable(tool) for tool in tools)
 
     def test_tool_names(self):
         """Test that usage tools have the expected names including new tools."""
         tools = usage_admin_tools()
-        tool_names = [tool.name for tool in tools]
+        tool_names = [tool.__name__ for tool in tools]
 
         assert "top_cost_centers" in tool_names
         assert "cost_by_dimension" in tool_names  # NEW from addendum
@@ -323,16 +322,16 @@ class TestUsageAdminTools:
     def test_tool_descriptions_include_chargeback(self):
         """Test that cost_by_dimension mentions chargeback."""
         tools = usage_admin_tools()
-        cost_by_dim_tool = next(t for t in tools if t.name == "cost_by_dimension")
+        cost_by_dim_tool = next(t for t in tools if t.__name__ == "cost_by_dimension")
 
-        assert "chargeback" in cost_by_dim_tool.description.lower()
+        assert "chargeback" in cost_by_dim_tool.__doc__.lower()
 
     def test_tool_descriptions_include_budget(self):
         """Test that budget_status mentions budget monitoring."""
         tools = usage_admin_tools()
-        budget_tool = next(t for t in tools if t.name == "budget_status")
+        budget_tool = next(t for t in tools if t.__name__ == "budget_status")
 
-        assert "budget" in budget_tool.description.lower()
+        assert "budget" in budget_tool.__doc__.lower()
 
     @patch('admin_ai_bridge.tools_databricks_agent.UsageAdmin')
     def test_top_cost_centers_invocation(self, mock_usage_admin_class):
@@ -351,9 +350,9 @@ class TestUsageAdminTools:
         mock_usage_admin.top_cost_centers.return_value = [mock_usage]
 
         tools = usage_admin_tools()
-        cost_tool = next(t for t in tools if t.name == "top_cost_centers")
+        cost_tool = next(t for t in tools if t.__name__ == "top_cost_centers")
 
-        result = cost_tool.func(lookback_days=7, limit=20)
+        result = cost_tool(lookback_days=7, limit=20)
 
         assert isinstance(result, list)
         assert len(result) == 1
@@ -376,9 +375,9 @@ class TestUsageAdminTools:
         mock_usage_admin.cost_by_dimension.return_value = [mock_usage]
 
         tools = usage_admin_tools()
-        cost_by_dim_tool = next(t for t in tools if t.name == "cost_by_dimension")
+        cost_by_dim_tool = next(t for t in tools if t.__name__ == "cost_by_dimension")
 
-        result = cost_by_dim_tool.func(dimension="workspace", lookback_days=30, limit=100)
+        result = cost_by_dim_tool(dimension="workspace", lookback_days=30, limit=100)
 
         assert isinstance(result, list)
         assert len(result) == 1
@@ -403,9 +402,9 @@ class TestUsageAdminTools:
         mock_usage_admin.budget_status.return_value = mock_budget_status
 
         tools = usage_admin_tools()
-        budget_tool = next(t for t in tools if t.name == "budget_status")
+        budget_tool = next(t for t in tools if t.__name__ == "budget_status")
 
-        result = budget_tool.func(dimension="project", period_days=30, warn_threshold=0.8)
+        result = budget_tool(dimension="project", period_days=30, warn_threshold=0.8)
 
         assert isinstance(result, list)
         assert len(result) == 1
@@ -422,12 +421,12 @@ class TestAuditAdminTools:
 
         assert isinstance(tools, list)
         assert len(tools) == 2
-        assert all(isinstance(tool, ToolSpec) for tool in tools)
+        assert all(callable(tool) for tool in tools)
 
     def test_tool_names(self):
         """Test that audit tools have the expected names."""
         tools = audit_admin_tools()
-        tool_names = [tool.name for tool in tools]
+        tool_names = [tool.__name__ for tool in tools]
 
         assert "failed_logins" in tool_names
         assert "recent_admin_changes" in tool_names
@@ -449,9 +448,9 @@ class TestAuditAdminTools:
         mock_audit_admin.failed_logins.return_value = [mock_event]
 
         tools = audit_admin_tools()
-        failed_logins_tool = next(t for t in tools if t.name == "failed_logins")
+        failed_logins_tool = next(t for t in tools if t.__name__ == "failed_logins")
 
-        result = failed_logins_tool.func(lookback_hours=24.0, limit=100)
+        result = failed_logins_tool(lookback_hours=24.0, limit=100)
 
         assert isinstance(result, list)
         # Note: audit methods may return empty lists in placeholder implementation
@@ -467,12 +466,12 @@ class TestPipelinesAdminTools:
 
         assert isinstance(tools, list)
         assert len(tools) == 2
-        assert all(isinstance(tool, ToolSpec) for tool in tools)
+        assert all(callable(tool) for tool in tools)
 
     def test_tool_names(self):
         """Test that pipeline tools have the expected names."""
         tools = pipelines_admin_tools()
-        tool_names = [tool.name for tool in tools]
+        tool_names = [tool.__name__ for tool in tools]
 
         assert "list_lagging_pipelines" in tool_names
         assert "list_failed_pipelines" in tool_names
@@ -494,9 +493,9 @@ class TestPipelinesAdminTools:
         mock_pipelines_admin.list_lagging_pipelines.return_value = [mock_pipeline]
 
         tools = pipelines_admin_tools()
-        lagging_tool = next(t for t in tools if t.name == "list_lagging_pipelines")
+        lagging_tool = next(t for t in tools if t.__name__ == "list_lagging_pipelines")
 
-        result = lagging_tool.func(max_lag_seconds=600.0, limit=50)
+        result = lagging_tool(max_lag_seconds=600.0, limit=50)
 
         assert isinstance(result, list)
         assert len(result) == 1
@@ -525,8 +524,8 @@ class TestToolJSONSerialization:
         mock_jobs_admin.list_long_running_jobs.return_value = [mock_run]
 
         tools = jobs_admin_tools()
-        tool = next(t for t in tools if t.name == "list_long_running_jobs")
-        result = tool.func()
+        tool = next(t for t in tools if t.__name__ == "list_long_running_jobs")
+        result = tool()
 
         # Should be able to serialize to JSON
         json_str = json.dumps(result, default=str)
@@ -552,8 +551,8 @@ class TestToolJSONSerialization:
         mock_usage_admin.budget_status.return_value = mock_budget
 
         tools = usage_admin_tools()
-        tool = next(t for t in tools if t.name == "budget_status")
-        result = tool.func(dimension="workspace")
+        tool = next(t for t in tools if t.__name__ == "budget_status")
+        result = tool(dimension="workspace")
 
         # Should be able to serialize to JSON
         json_str = json.dumps(result, default=str)
@@ -571,10 +570,10 @@ class TestToolParameterValidation:
         mock_jobs_admin.list_long_running_jobs.return_value = []
 
         tools = jobs_admin_tools()
-        tool = next(t for t in tools if t.name == "list_long_running_jobs")
+        tool = next(t for t in tools if t.__name__ == "list_long_running_jobs")
 
         # Call with specific parameters
-        tool.func(min_duration_hours=6.0, lookback_hours=48.0, limit=10)
+        tool(min_duration_hours=6.0, lookback_hours=48.0, limit=10)
 
         # Verify parameters were passed correctly
         mock_jobs_admin.list_long_running_jobs.assert_called_once_with(
@@ -614,7 +613,7 @@ class TestAllDomainsExported:
             tools = tool_func()
             assert isinstance(tools, list)
             assert len(tools) > 0
-            assert all(isinstance(t, ToolSpec) for t in tools)
+            assert all(callable(t) for t in tools)
 
 
 class TestReadOnlyOperations:
@@ -637,10 +636,10 @@ class TestReadOnlyOperations:
         for tool_func in all_tool_functions:
             tools = tool_func()
             for tool in tools:
-                tool_name_lower = tool.name.lower()
+                tool_name_lower = tool.__name__.lower()
                 for keyword in destructive_keywords:
                     assert keyword not in tool_name_lower, \
-                        f"Tool '{tool.name}' contains destructive keyword '{keyword}'"
+                        f"Tool '{tool.__name__}' contains destructive keyword '{keyword}'"
 
     def test_descriptions_emphasize_read_only(self):
         """Test that tool descriptions emphasize read-only/observability nature."""
@@ -660,8 +659,8 @@ class TestReadOnlyOperations:
         for tool_func in all_tool_functions:
             tools = tool_func()
             for tool in tools:
-                desc_lower = tool.description.lower()
+                desc_lower = tool.__doc__.lower()
                 # At least one read-only keyword should be present
                 has_read_only_keyword = any(keyword in desc_lower for keyword in read_only_keywords)
                 assert has_read_only_keyword, \
-                    f"Tool '{tool.name}' description doesn't clearly indicate read-only operation"
+                    f"Tool '{tool.__name__}' docstring doesn't clearly indicate read-only operation"
