@@ -183,10 +183,20 @@ class ClustersAdmin:
                             val = cluster_info.creator_user_name
                             creator = val if isinstance(val, (str, type(None))) else None
 
+                        # Handle state field (can be object or dict)
+                        state_str = None
+                        if cluster_info.state:
+                            if hasattr(cluster_info.state, 'value'):
+                                state_str = cluster_info.state.value
+                            elif isinstance(cluster_info.state, dict):
+                                state_str = cluster_info.state.get('value') or str(cluster_info.state)
+                            else:
+                                state_str = str(cluster_info.state)
+
                         cluster_summary = ClusterSummary(
                             cluster_id=cluster.cluster_id,
                             cluster_name=cluster_info.cluster_name or f"Cluster {cluster.cluster_id}",
-                            state=cluster_info.state.value,
+                            state=state_str,
                             creator=creator,
                             start_time=cluster_start_time,
                             driver_node_type=driver_node_type,
@@ -347,10 +357,20 @@ class ClustersAdmin:
                             except (TypeError, ValueError):
                                 pass
 
+                        # Handle state field (can be object or dict)
+                        state_str = None
+                        if cluster_info.state:
+                            if hasattr(cluster_info.state, 'value'):
+                                state_str = cluster_info.state.value
+                            elif isinstance(cluster_info.state, dict):
+                                state_str = cluster_info.state.get('value') or str(cluster_info.state)
+                            else:
+                                state_str = str(cluster_info.state)
+
                         cluster_summary = ClusterSummary(
                             cluster_id=cluster.cluster_id,
                             cluster_name=cluster_info.cluster_name or f"Cluster {cluster.cluster_id}",
-                            state=cluster_info.state.value,
+                            state=state_str,
                             creator=creator,
                             start_time=start_time,
                             driver_node_type=driver_node_type,

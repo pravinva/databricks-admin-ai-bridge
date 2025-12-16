@@ -148,20 +148,40 @@ class JobsAdmin:
 
                         # Check if it meets the duration threshold
                         if duration_seconds >= min_duration_seconds:
-                            # Determine overall state
+                            # Determine overall state with robust handling
                             state = "UNKNOWN"
                             if run.state:
                                 if run.state.result_state:
-                                    state = run.state.result_state.value
+                                    if hasattr(run.state.result_state, 'value'):
+                                        state = run.state.result_state.value
+                                    elif isinstance(run.state.result_state, dict):
+                                        state = run.state.result_state.get('value') or str(run.state.result_state)
+                                    else:
+                                        state = str(run.state.result_state)
                                 elif run.state.life_cycle_state:
-                                    state = run.state.life_cycle_state.value
+                                    if hasattr(run.state.life_cycle_state, 'value'):
+                                        state = run.state.life_cycle_state.value
+                                    elif isinstance(run.state.life_cycle_state, dict):
+                                        state = run.state.life_cycle_state.get('value') or str(run.state.life_cycle_state)
+                                    else:
+                                        state = str(run.state.life_cycle_state)
+
+                            # Handle life_cycle_state field
+                            life_cycle_state_str = None
+                            if run.state and run.state.life_cycle_state:
+                                if hasattr(run.state.life_cycle_state, 'value'):
+                                    life_cycle_state_str = run.state.life_cycle_state.value
+                                elif isinstance(run.state.life_cycle_state, dict):
+                                    life_cycle_state_str = run.state.life_cycle_state.get('value') or str(run.state.life_cycle_state)
+                                else:
+                                    life_cycle_state_str = str(run.state.life_cycle_state)
 
                             job_summary = JobRunSummary(
                                 job_id=job.job_id,
                                 job_name=job.settings.name if job.settings else f"Job {job.job_id}",
                                 run_id=run.run_id,
                                 state=state,
-                                life_cycle_state=run.state.life_cycle_state.value if run.state and run.state.life_cycle_state else None,
+                                life_cycle_state=life_cycle_state_str,
                                 start_time=datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc),
                                 end_time=datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc) if end_ms else None,
                                 duration_seconds=duration_seconds,
@@ -276,19 +296,39 @@ class JobsAdmin:
                             if start_ms and end_ms:
                                 duration_seconds = (end_ms - start_ms) / 1000.0
 
-                            # Determine overall state
+                            # Determine overall state with robust handling
                             state = "FAILED"
                             if run.state.result_state:
-                                state = run.state.result_state.value
+                                if hasattr(run.state.result_state, 'value'):
+                                    state = run.state.result_state.value
+                                elif isinstance(run.state.result_state, dict):
+                                    state = run.state.result_state.get('value') or str(run.state.result_state)
+                                else:
+                                    state = str(run.state.result_state)
                             elif run.state.life_cycle_state:
-                                state = run.state.life_cycle_state.value
+                                if hasattr(run.state.life_cycle_state, 'value'):
+                                    state = run.state.life_cycle_state.value
+                                elif isinstance(run.state.life_cycle_state, dict):
+                                    state = run.state.life_cycle_state.get('value') or str(run.state.life_cycle_state)
+                                else:
+                                    state = str(run.state.life_cycle_state)
+
+                            # Handle life_cycle_state field
+                            life_cycle_state_str = None
+                            if run.state.life_cycle_state:
+                                if hasattr(run.state.life_cycle_state, 'value'):
+                                    life_cycle_state_str = run.state.life_cycle_state.value
+                                elif isinstance(run.state.life_cycle_state, dict):
+                                    life_cycle_state_str = run.state.life_cycle_state.get('value') or str(run.state.life_cycle_state)
+                                else:
+                                    life_cycle_state_str = str(run.state.life_cycle_state)
 
                             job_summary = JobRunSummary(
                                 job_id=job.job_id,
                                 job_name=job.settings.name if job.settings else f"Job {job.job_id}",
                                 run_id=run.run_id,
                                 state=state,
-                                life_cycle_state=run.state.life_cycle_state.value if run.state.life_cycle_state else None,
+                                life_cycle_state=life_cycle_state_str,
                                 start_time=datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc) if start_ms else None,
                                 end_time=datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc) if end_ms else None,
                                 duration_seconds=duration_seconds,

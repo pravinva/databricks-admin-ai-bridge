@@ -145,10 +145,20 @@ class PipelinesAdmin:
 
                     # Check if lag exceeds threshold
                     if lag_seconds and lag_seconds > max_lag_seconds:
+                        # Handle state field (can be object or dict)
+                        state_str = "UNKNOWN"
+                        if details.state:
+                            if hasattr(details.state, 'value'):
+                                state_str = details.state.value
+                            elif isinstance(details.state, dict):
+                                state_str = details.state.get('value') or str(details.state)
+                            else:
+                                state_str = str(details.state)
+
                         pipeline_status = PipelineStatus(
                             pipeline_id=pipeline.pipeline_id,
                             name=details.name or f"Pipeline {pipeline.pipeline_id}",
-                            state=details.state.value if details.state else "UNKNOWN",
+                            state=state_str,
                             last_update_time=datetime.fromtimestamp(
                                 details.latest_updates[0].creation_time / 1000, tz=timezone.utc
                             ) if details.latest_updates and details.latest_updates[0].creation_time else None,
@@ -274,10 +284,20 @@ class PipelinesAdmin:
                                     if latest.state_message:
                                         error_msg = latest.state_message
 
+                                # Handle state field (can be object or dict)
+                                state_str = "UNKNOWN"
+                                if update.state:
+                                    if hasattr(update.state, 'value'):
+                                        state_str = update.state.value
+                                    elif isinstance(update.state, dict):
+                                        state_str = update.state.get('value') or str(update.state)
+                                    else:
+                                        state_str = str(update.state)
+
                                 pipeline_status = PipelineStatus(
                                     pipeline_id=pipeline.pipeline_id,
                                     name=details.name or f"Pipeline {pipeline.pipeline_id}",
-                                    state=update.state.value if update.state else "UNKNOWN",
+                                    state=state_str,
                                     last_update_time=update_time,
                                     lag_seconds=None,
                                     last_error=error_msg

@@ -193,13 +193,23 @@ class UsageAdmin:
                     total_runtime_hours = 0.0
 
                     for event in events:
-                        if event.type and "STARTING" in event.type.value:
-                            cluster_start = event.timestamp
-                        elif event.type and ("TERMINATING" in event.type.value or "TERMINATED" in event.type.value):
-                            if cluster_start and event.timestamp:
-                                runtime_ms = event.timestamp - cluster_start
-                                total_runtime_hours += runtime_ms / (1000.0 * 3600.0)
-                                cluster_start = None
+                        if event.type:
+                            # Handle type field (can be object or dict)
+                            type_str = None
+                            if hasattr(event.type, 'value'):
+                                type_str = event.type.value
+                            elif isinstance(event.type, dict):
+                                type_str = event.type.get('value') or str(event.type)
+                            else:
+                                type_str = str(event.type)
+
+                            if type_str and "STARTING" in type_str:
+                                cluster_start = event.timestamp
+                            elif type_str and ("TERMINATING" in type_str or "TERMINATED" in type_str):
+                                if cluster_start and event.timestamp:
+                                    runtime_ms = event.timestamp - cluster_start
+                                    total_runtime_hours += runtime_ms / (1000.0 * 3600.0)
+                                    cluster_start = None
 
                     # If still running, add time until now
                     if cluster_start:
@@ -240,9 +250,19 @@ class UsageAdmin:
                         # Get warehouse info for state
                         wh_info = self.ws.warehouses.get(id=warehouse.id)
 
+                        # Handle state field (can be object or dict)
+                        state_str = None
+                        if wh_info.state:
+                            if hasattr(wh_info.state, 'value'):
+                                state_str = wh_info.state.value
+                            elif isinstance(wh_info.state, dict):
+                                state_str = wh_info.state.get('value') or str(wh_info.state)
+                            else:
+                                state_str = str(wh_info.state)
+
                         # Estimate usage based on cluster size and state
                         # In production, query system.billing.usage for actual data
-                        if wh_info.state and "RUNNING" in wh_info.state.value:
+                        if state_str and "RUNNING" in state_str:
                             cluster_size = wh_info.cluster_size or "2X-Small"
 
                             # Very rough estimation

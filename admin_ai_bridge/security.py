@@ -98,25 +98,35 @@ class SecurityAdmin:
                     # Check for CAN_MANAGE permission
                     if acl.all_permissions:
                         for perm in acl.all_permissions:
-                            if perm.permission_level and "MANAGE" in perm.permission_level.value:
-                                # Determine the principal name
-                                principal = None
-                                if acl.user_name:
-                                    principal = acl.user_name
-                                elif acl.group_name:
-                                    principal = acl.group_name
-                                elif acl.service_principal_name:
-                                    principal = acl.service_principal_name
+                            if perm.permission_level:
+                                # Handle permission_level field (can be object or dict)
+                                perm_level_str = None
+                                if hasattr(perm.permission_level, 'value'):
+                                    perm_level_str = perm.permission_level.value
+                                elif isinstance(perm.permission_level, dict):
+                                    perm_level_str = perm.permission_level.get('value') or str(perm.permission_level)
+                                else:
+                                    perm_level_str = str(perm.permission_level)
 
-                                if principal:
-                                    entry = PermissionEntry(
-                                        object_type="JOB",
-                                        object_id=str(job_id),
-                                        principal=principal,
-                                        permission_level=perm.permission_level.value
-                                    )
-                                    results.append(entry)
-                                    logger.debug(f"Found permission: {principal} - {perm.permission_level.value}")
+                                if perm_level_str and "MANAGE" in perm_level_str:
+                                    # Determine the principal name
+                                    principal = None
+                                    if acl.user_name:
+                                        principal = acl.user_name
+                                    elif acl.group_name:
+                                        principal = acl.group_name
+                                    elif acl.service_principal_name:
+                                        principal = acl.service_principal_name
+
+                                    if principal:
+                                        entry = PermissionEntry(
+                                            object_type="JOB",
+                                            object_id=str(job_id),
+                                            principal=principal,
+                                            permission_level=perm_level_str
+                                        )
+                                        results.append(entry)
+                                        logger.debug(f"Found permission: {principal} - {perm_level_str}")
 
             logger.info(f"Found {len(results)} principals with CAN_MANAGE on job {job_id}")
             return results
@@ -175,9 +185,17 @@ class SecurityAdmin:
                     if acl.all_permissions:
                         for perm in acl.all_permissions:
                             if perm.permission_level:
+                                # Handle permission_level field (can be object or dict)
+                                perm_level = None
+                                if hasattr(perm.permission_level, 'value'):
+                                    perm_level = perm.permission_level.value
+                                elif isinstance(perm.permission_level, dict):
+                                    perm_level = perm.permission_level.get('value') or str(perm.permission_level)
+                                else:
+                                    perm_level = str(perm.permission_level)
+
                                 # Include CAN_ATTACH_TO, CAN_RESTART, and CAN_MANAGE
-                                perm_level = perm.permission_level.value
-                                if any(keyword in perm_level for keyword in ["ATTACH", "RESTART", "MANAGE"]):
+                                if perm_level and any(keyword in perm_level for keyword in ["ATTACH", "RESTART", "MANAGE"]):
                                     # Determine the principal name
                                     principal = None
                                     if acl.user_name:

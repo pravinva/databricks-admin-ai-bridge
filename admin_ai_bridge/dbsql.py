@@ -136,11 +136,21 @@ class DBSQLAdmin:
                     val = query_info.query_text
                     sql_text = val if isinstance(val, (str, type(None))) else None
 
+                # Handle status field (can be object or dict)
+                status_str = None
+                if query_info.status:
+                    if hasattr(query_info.status, 'value'):
+                        status_str = query_info.status.value
+                    elif isinstance(query_info.status, dict):
+                        status_str = query_info.status.get('value') or str(query_info.status)
+                    else:
+                        status_str = str(query_info.status)
+
                 query_entry = QueryHistoryEntry(
                     query_id=query_info.query_id,
                     warehouse_id=query_info.warehouse_id,
                     user_name=query_info.user_name,
-                    status=query_info.status.value if query_info.status else None,
+                    status=status_str,
                     start_time=datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc),
                     end_time=datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc),
                     duration_seconds=duration_seconds,
