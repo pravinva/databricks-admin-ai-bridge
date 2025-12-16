@@ -131,17 +131,23 @@ class PipelinesAdmin:
                                 # monitoring metrics or observability APIs
                                 # For now, we'll use creation time as a proxy
                                 if latest.creation_time:
-                                    # Calculate time since last update
-                                    now = datetime.now(timezone.utc)
-                                    creation_dt = datetime.fromtimestamp(
-                                        latest.creation_time / 1000, tz=timezone.utc
-                                    )
-                                    # This is a placeholder - real lag would come from metrics
-                                    potential_lag = (now - creation_dt).total_seconds()
+                                    try:
+                                        # Calculate time since last update
+                                        now = datetime.now(timezone.utc)
+                                        # Convert creation_time to int if it's a string
+                                        creation_time_ms = int(latest.creation_time) if isinstance(latest.creation_time, str) else latest.creation_time
+                                        creation_dt = datetime.fromtimestamp(
+                                            creation_time_ms / 1000, tz=timezone.utc
+                                        )
+                                        # This is a placeholder - real lag would come from metrics
+                                        potential_lag = (now - creation_dt).total_seconds()
 
-                                    # Only consider as "lag" if pipeline is supposed to be streaming
-                                    if details.spec and details.spec.continuous:
-                                        lag_seconds = potential_lag
+                                        # Only consider as "lag" if pipeline is supposed to be streaming
+                                        if details.spec and details.spec.continuous:
+                                            lag_seconds = potential_lag
+                                    except (ValueError, TypeError) as e:
+                                        logger.debug(f"Could not parse creation_time: {e}")
+                                        continue
 
                     # Check if lag exceeds threshold
                     if lag_seconds and lag_seconds > max_lag_seconds:
@@ -155,13 +161,22 @@ class PipelinesAdmin:
                             else:
                                 state_str = str(details.state)
 
+                        # Parse last_update_time safely
+                        last_update_time = None
+                        if details.latest_updates and details.latest_updates[0].creation_time:
+                            try:
+                                creation_time_ms = int(details.latest_updates[0].creation_time) if isinstance(details.latest_updates[0].creation_time, str) else details.latest_updates[0].creation_time
+                                last_update_time = datetime.fromtimestamp(
+                                    creation_time_ms / 1000, tz=timezone.utc
+                                )
+                            except (ValueError, TypeError) as e:
+                                logger.debug(f"Could not parse last_update_time: {e}")
+
                         pipeline_status = PipelineStatus(
                             pipeline_id=pipeline.pipeline_id,
                             name=details.name or f"Pipeline {pipeline.pipeline_id}",
                             state=state_str,
-                            last_update_time=datetime.fromtimestamp(
-                                details.latest_updates[0].creation_time / 1000, tz=timezone.utc
-                            ) if details.latest_updates and details.latest_updates[0].creation_time else None,
+                            last_update_time=last_update_time,
                             lag_seconds=lag_seconds,
                             last_error=None
                         )
