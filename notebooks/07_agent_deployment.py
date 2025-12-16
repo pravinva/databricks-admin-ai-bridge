@@ -168,18 +168,16 @@ Your capabilities span across multiple domains:
 Always provide clear, concise, and actionable information to help admins maintain a healthy Databricks environment.
 """
 
-# Create agent specification
-agent_spec = agents.AgentSpec(
-    name="admin_observability_agent",
-    system_prompt=system_prompt,
-    llm_endpoint="databricks-meta-llama-3-1-70b-instruct",  # or "databricks-claude-3-5-sonnet"
-    tools=all_tools,
-)
-
-print("✓ Agent specification created successfully")
-print(f"  Name: {agent_spec.name}")
-print(f"  LLM Endpoint: {agent_spec.llm_endpoint}")
-print(f"  Total Tools: {len(agent_spec.tools)}")
+# Display agent configuration
+print("✓ Agent configuration ready")
+print(f"  Recommended LLM: databricks-meta-llama-3-1-70b-instruct or databricks-claude-3-5-sonnet")
+print(f"  Total Tools: {len(all_tools)}")
+print(f"  System Prompt: {len(system_prompt)} characters")
+print()
+print("Tools available:")
+for i, tool in enumerate(all_tools[:5], 1):
+    print(f"  {i}. {tool.__name__}")
+print(f"  ... and {len(all_tools) - 5} more tools")
 
 # COMMAND ----------
 
@@ -192,31 +190,46 @@ print(f"  Total Tools: {len(agent_spec.tools)}")
 
 import mlflow
 
-# Set MLflow experiment
-mlflow.set_experiment("/Users/{}/admin_observability_agent".format(current_user.user_name))
+print("=" * 70)
+print("AGENT DEPLOYMENT INSTRUCTIONS")
+print("=" * 70)
+print()
+print("To deploy this agent, you have several options:")
+print()
+print("1. **Use Databricks Agent Framework (Recommended)**")
+print("   - Register tools with Unity Catalog")
+print("   - Create agent using Databricks UI")
+print("   - Configure with the system prompt above")
+print("   - Deploy to serving endpoint")
+print()
+print("2. **Use LangChain**")
+print("   - Wrap tools in LangChain format")
+print("   - Create LangChain agent with tools")
+print("   - Deploy using MLflow")
+print()
+print("3. **Direct API Integration**")
+print("   - Call tools directly from your application")
+print("   - Use tools with custom LLM integration")
+print()
+print("=" * 70)
+print()
+print("Example: Using tools directly")
+print("-" * 70)
+print("""
+# Example: Query failed jobs
+from admin_ai_bridge import AdminBridgeConfig, JobsAdmin
 
-print("Deploying admin-observability-agent endpoint...")
-print("This may take a few minutes...\n")
+cfg = AdminBridgeConfig()
+jobs_admin = JobsAdmin(cfg)
+failed = jobs_admin.list_failed_jobs(
+    lookback_hours=24.0,
+    limit=10,
+    warehouse_id=warehouse_id
+)
 
-try:
-    # Deploy the agent
-    deployed_agent = agents.deploy(
-        model=agent_spec,
-        name="admin-observability-agent",
-        # Configure endpoint settings
-        workload_size="Small",
-        workload_type="CPU",
-    )
-
-    print("✓ Agent deployed successfully!")
-    print(f"  Endpoint name: {deployed_agent.endpoint_name}")
-    print(f"  Model name: {deployed_agent.model_name}")
-    print(f"  Model version: {deployed_agent.model_version}")
-
-except Exception as e:
-    print(f"⚠ Deployment encountered an issue: {e}")
-    print("\nNote: If the endpoint already exists, it may need to be updated manually.")
-    print("You can also use the endpoint from a previous deployment.")
+for job in failed:
+    print(f"Job {job.job_name}: {job.state}")
+""")
 
 # COMMAND ----------
 
@@ -227,33 +240,82 @@ except Exception as e:
 
 # COMMAND ----------
 
-# Function to test the agent
-def test_agent_query(question: str, endpoint_name: str = "admin-observability-agent"):
-    """Test the agent with a natural language query."""
+# Function to demonstrate tool usage
+def demonstrate_tool(tool_name: str, description: str):
+    """Demonstrate a tool's capability."""
     print("=" * 70)
-    print(f"QUESTION: {question}")
+    print(f"TOOL: {tool_name}")
     print("=" * 70)
+    print(f"Description: {description}")
+    print()
 
-    try:
-        # Query the agent endpoint
-        response = ws.serving_endpoints.query(
-            name=endpoint_name,
-            inputs=[{"query": question}]
-        )
+    # Map tool names to actual admin class methods
+    demos = {
+        "Jobs - Long Running": lambda: demo_long_running_jobs(),
+        "Jobs - Failed": lambda: demo_failed_jobs(),
+        "DBSQL - Slow Queries": lambda: demo_slow_queries(),
+        "Clusters - Idle": lambda: demo_idle_clusters(),
+    }
 
-        print("\nAGENT RESPONSE:")
-        print("-" * 70)
-        if hasattr(response, 'predictions') and response.predictions:
-            print(response.predictions[0])
-        else:
-            print(response)
-        print("-" * 70)
+    if tool_name in demos:
+        demos[tool_name]()
+    else:
+        print("Tool demonstration not configured for this tool.")
 
-    except Exception as e:
-        print(f"\n⚠ Error querying agent: {e}")
-        print("Make sure the agent endpoint is deployed and ready.")
+    print()
 
-    print("\n")
+def demo_long_running_jobs():
+    """Demo long-running jobs query."""
+    from admin_ai_bridge import JobsAdmin
+    jobs_admin = JobsAdmin(cfg)
+    jobs = jobs_admin.list_long_running_jobs(
+        min_duration_hours=4.0,
+        lookback_hours=24.0,
+        limit=5,
+        warehouse_id=warehouse_id
+    )
+    print(f"Found {len(jobs)} long-running jobs")
+    for job in jobs[:3]:
+        duration_h = job.duration_seconds / 3600 if job.duration_seconds else 0
+        print(f"  - {job.job_name}: {duration_h:.1f}h - {job.state}")
+
+def demo_failed_jobs():
+    """Demo failed jobs query."""
+    from admin_ai_bridge import JobsAdmin
+    jobs_admin = JobsAdmin(cfg)
+    jobs = jobs_admin.list_failed_jobs(
+        lookback_hours=24.0,
+        limit=5,
+        warehouse_id=warehouse_id
+    )
+    print(f"Found {len(jobs)} failed jobs")
+    for job in jobs[:3]:
+        print(f"  - {job.job_name}: {job.state}")
+
+def demo_slow_queries():
+    """Demo slow queries."""
+    from admin_ai_bridge import DBSQLAdmin
+    dbsql_admin = DBSQLAdmin(cfg, warehouse_id=warehouse_id)
+    queries = dbsql_admin.top_slowest_queries(
+        lookback_hours=24.0,
+        limit=5
+    )
+    print(f"Found {len(queries)} slow queries")
+    for q in queries[:3]:
+        duration_s = q.duration_seconds if q.duration_seconds else 0
+        print(f"  - User {q.user}: {duration_s:.1f}s")
+
+def demo_idle_clusters():
+    """Demo idle clusters."""
+    from admin_ai_bridge import ClustersAdmin
+    clusters_admin = ClustersAdmin(cfg, warehouse_id=warehouse_id)
+    clusters = clusters_admin.list_idle_clusters(
+        idle_hours=2.0,
+        limit=5
+    )
+    print(f"Found {len(clusters)} idle clusters")
+    for c in clusters[:3]:
+        print(f"  - {c.cluster_name}: {c.state}")
 
 # COMMAND ----------
 
@@ -262,12 +324,12 @@ def test_agent_query(question: str, endpoint_name: str = "admin-observability-ag
 
 # COMMAND ----------
 
-# Test job-related queries
-test_agent_query("Which jobs have been running longer than 4 hours in the last 24 hours?")
+# Demonstrate job-related tools
+demonstrate_tool("Jobs - Long Running", "Find jobs running longer than 4 hours in the last 24 hours")
 
 # COMMAND ----------
 
-test_agent_query("Show me all failed jobs in the last 24 hours")
+demonstrate_tool("Jobs - Failed", "Show all failed jobs in the last 24 hours")
 
 # COMMAND ----------
 
@@ -276,7 +338,7 @@ test_agent_query("Show me all failed jobs in the last 24 hours")
 
 # COMMAND ----------
 
-test_agent_query("What are the top 10 slowest queries in the last 24 hours?")
+demonstrate_tool("DBSQL - Slow Queries", "Top 10 slowest queries in the last 24 hours")
 
 # COMMAND ----------
 
@@ -285,11 +347,11 @@ test_agent_query("What are the top 10 slowest queries in the last 24 hours?")
 
 # COMMAND ----------
 
-test_agent_query("Which clusters have been idle for more than 2 hours?")
+demonstrate_tool("Clusters - Idle", "Clusters idle for more than 2 hours")
 
 # COMMAND ----------
 
-test_agent_query("Show me clusters running longer than 8 hours")
+# Example query (requires deployed agent): test_agent_query("Show me clusters running longer than 8 hours")
 
 # COMMAND ----------
 
@@ -299,7 +361,7 @@ test_agent_query("Show me clusters running longer than 8 hours")
 # COMMAND ----------
 
 # Note: Replace with actual job/cluster IDs from your workspace
-test_agent_query("Show me who can manage jobs in the workspace")
+# Example query (requires deployed agent): test_agent_query("Show me who can manage jobs in the workspace")
 
 # COMMAND ----------
 
@@ -308,19 +370,19 @@ test_agent_query("Show me who can manage jobs in the workspace")
 
 # COMMAND ----------
 
-test_agent_query("What are the top cost centers in the last 7 days?")
+# Example query (requires deployed agent): test_agent_query("What are the top cost centers in the last 7 days?")
 
 # COMMAND ----------
 
-test_agent_query("Show me cost by workspace for the last 30 days")
+# Example query (requires deployed agent): test_agent_query("Show me cost by workspace for the last 30 days")
 
 # COMMAND ----------
 
-test_agent_query("Which teams are over 80% of their monthly budget?")
+# Example query (requires deployed agent): test_agent_query("Which teams are over 80% of their monthly budget?")
 
 # COMMAND ----------
 
-test_agent_query("Calculate chargeback by project for the last month")
+# Example query (requires deployed agent): test_agent_query("Calculate chargeback by project for the last month")
 
 # COMMAND ----------
 
@@ -329,11 +391,11 @@ test_agent_query("Calculate chargeback by project for the last month")
 
 # COMMAND ----------
 
-test_agent_query("Show me failed login attempts in the last 24 hours")
+# Example query (requires deployed agent): test_agent_query("Show me failed login attempts in the last 24 hours")
 
 # COMMAND ----------
 
-test_agent_query("What admin changes were made in the last 24 hours?")
+# Example query (requires deployed agent): test_agent_query("What admin changes were made in the last 24 hours?")
 
 # COMMAND ----------
 
@@ -342,11 +404,11 @@ test_agent_query("What admin changes were made in the last 24 hours?")
 
 # COMMAND ----------
 
-test_agent_query("Which pipelines are lagging by more than 10 minutes?")
+# Example query (requires deployed agent): test_agent_query("Which pipelines are lagging by more than 10 minutes?")
 
 # COMMAND ----------
 
-test_agent_query("List all failed pipelines in the last 24 hours")
+# Example query (requires deployed agent): test_agent_query("List all failed pipelines in the last 24 hours")
 
 # COMMAND ----------
 
@@ -355,14 +417,14 @@ test_agent_query("List all failed pipelines in the last 24 hours")
 
 # COMMAND ----------
 
-test_agent_query(
+# Example query (requires deployed agent): test_agent_query(
     "Give me a comprehensive health report covering jobs, queries, clusters, "
     "security events, and pipeline status for the last 24 hours"
 )
 
 # COMMAND ----------
 
-test_agent_query(
+# Example query (requires deployed agent): test_agent_query(
     "What are the top 3 areas where we can optimize costs? "
     "Consider idle clusters, long-running jobs, and resource utilization"
 )
