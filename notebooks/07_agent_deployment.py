@@ -426,7 +426,29 @@ demonstrate_tool("Clusters - Idle", "Clusters idle for more than 2 hours")
 
 # COMMAND ----------
 
-# Example query (requires deployed agent): test_agent_query("Show me clusters running longer than 8 hours")
+def test_agent_query(query: str):
+    """Test the deployed agent with a query."""
+    try:
+        print(f"\n{'='*70}")
+        print(f"Query: {query}")
+        print(f"{'='*70}\n")
+
+        # Query the deployed endpoint
+        response = ws.serving_endpoints.query(
+            name="admin-observability-agent",
+            inputs=[{"query": query}]
+        )
+
+        print("Response:")
+        print(response.predictions[0] if response.predictions else "No response")
+        print(f"\n{'='*70}\n")
+
+    except Exception as e:
+        print(f"❌ Error querying agent: {e}")
+        print("Make sure the agent is deployed successfully first (run cell 6)")
+
+# Test with a simple query
+test_agent_query("Show me clusters running longer than 8 hours")
 
 # COMMAND ----------
 
@@ -435,8 +457,7 @@ demonstrate_tool("Clusters - Idle", "Clusters idle for more than 2 hours")
 
 # COMMAND ----------
 
-# Note: Replace with actual job/cluster IDs from your workspace
-# Example query (requires deployed agent): test_agent_query("Show me who can manage jobs in the workspace")
+test_agent_query("Show me who can manage jobs in the workspace")
 
 # COMMAND ----------
 
@@ -445,19 +466,19 @@ demonstrate_tool("Clusters - Idle", "Clusters idle for more than 2 hours")
 
 # COMMAND ----------
 
-# Example query (requires deployed agent): test_agent_query("What are the top cost centers in the last 7 days?")
+test_agent_query("What are the top cost centers in the last 7 days?")
 
 # COMMAND ----------
 
-# Example query (requires deployed agent): test_agent_query("Show me cost by workspace for the last 30 days")
+test_agent_query("Show me cost by workspace for the last 30 days")
 
 # COMMAND ----------
 
-# Example query (requires deployed agent): test_agent_query("Which teams are over 80% of their monthly budget?")
+test_agent_query("Which teams are over 80% of their monthly budget?")
 
 # COMMAND ----------
 
-# Example query (requires deployed agent): test_agent_query("Calculate chargeback by project for the last month")
+test_agent_query("Calculate chargeback by project for the last month")
 
 # COMMAND ----------
 
@@ -466,11 +487,11 @@ demonstrate_tool("Clusters - Idle", "Clusters idle for more than 2 hours")
 
 # COMMAND ----------
 
-# Example query (requires deployed agent): test_agent_query("Show me failed login attempts in the last 24 hours")
+test_agent_query("Show me failed login attempts in the last 24 hours")
 
 # COMMAND ----------
 
-# Example query (requires deployed agent): test_agent_query("What admin changes were made in the last 24 hours?")
+test_agent_query("What admin changes were made in the last 24 hours?")
 
 # COMMAND ----------
 
@@ -479,11 +500,11 @@ demonstrate_tool("Clusters - Idle", "Clusters idle for more than 2 hours")
 
 # COMMAND ----------
 
-# Example query (requires deployed agent): test_agent_query("Which pipelines are lagging by more than 10 minutes?")
+test_agent_query("Which pipelines are lagging by more than 10 minutes?")
 
 # COMMAND ----------
 
-# Example query (requires deployed agent): test_agent_query("List all failed pipelines in the last 24 hours")
+test_agent_query("List all failed pipelines in the last 24 hours")
 
 # COMMAND ----------
 
@@ -492,14 +513,14 @@ demonstrate_tool("Clusters - Idle", "Clusters idle for more than 2 hours")
 
 # COMMAND ----------
 
-# Example query (requires deployed agent): test_agent_query(
+test_agent_query(
     "Give me a comprehensive health report covering jobs, queries, clusters, "
     "security events, and pipeline status for the last 24 hours"
 )
 
 # COMMAND ----------
 
-# Example query (requires deployed agent): test_agent_query(
+test_agent_query(
     "What are the top 3 areas where we can optimize costs? "
     "Consider idle clusters, long-running jobs, and resource utilization"
 )
