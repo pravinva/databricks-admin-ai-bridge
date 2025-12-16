@@ -205,46 +205,91 @@ try:
     # Use Unity Catalog model name (3-level namespace required)
     uc_model_name = "main.default.admin_observability_agent"
 
-    # Step 1: Create a simple wrapper class for the agent
-    print("1. Creating agent wrapper...")
+    # Step 1: Create agent wrapper with tool execution
+    print("1. Creating agent wrapper with tool execution...")
 
     class AdminObservabilityAgent:
-        """Simple agent wrapper that uses ChatDatabricks with tools."""
+        """Agent wrapper that executes admin tools and uses LLM for synthesis."""
 
-        def __init__(self, tools, llm_endpoint):
+        def __init__(self, tools, llm_endpoint, cfg, warehouse_id):
             self.tools = {tool.__name__: tool for tool in tools}
+            self.cfg = cfg
+            self.warehouse_id = warehouse_id
             self.llm = ChatDatabricks(
                 endpoint=llm_endpoint,
                 temperature=0,
                 max_tokens=4000
             )
 
+        def predict(self, context, model_input):
+            """MLflow pyfunc predict method."""
+            query = model_input.get("query", "") if isinstance(model_input, dict) else str(model_input)
+            return self(query)
+
         def __call__(self, query):
-            """Process query and return response."""
-            # Simple implementation - in production this would use ReAct loop
-            tool_descriptions = "\n".join([
-                f"- {name}: {tool.__doc__ or 'No description'}"
-                for name, tool in self.tools.items()
-            ])
+            """Process query by executing relevant tools and synthesizing response."""
+            import re
+            import json
+            from databricks.sdk import WorkspaceClient
 
-            prompt = f"""You are a Databricks admin assistant with access to these tools:
+            # Simple keyword-based tool selection
+            query_lower = query.lower()
+            selected_tools = []
 
-{tool_descriptions}
+            # Map keywords to tool categories
+            if any(word in query_lower for word in ['job', 'workflow', 'running', 'failed']):
+                selected_tools.extend([t for name, t in self.tools.items() if 'job' in name.lower()])
+            if any(word in query_lower for word in ['query', 'sql', 'slow', 'dbsql']):
+                selected_tools.extend([t for name, t in self.tools.items() if 'query' in name.lower() or 'dbsql' in name.lower()])
+            if any(word in query_lower for word in ['cluster', 'idle', 'compute']):
+                selected_tools.extend([t for name, t in self.tools.items() if 'cluster' in name.lower()])
+            if any(word in query_lower for word in ['cost', 'budget', 'spend', 'chargeback']):
+                selected_tools.extend([t for name, t in self.tools.items() if 'cost' in name.lower() or 'budget' in name.lower()])
+            if any(word in query_lower for word in ['audit', 'login', 'security', 'permission']):
+                selected_tools.extend([t for name, t in self.tools.items() if 'audit' in name.lower() or 'security' in name.lower() or 'permission' in name.lower()])
+            if any(word in query_lower for word in ['pipeline', 'dlt']):
+                selected_tools.extend([t for name, t in self.tools.items() if 'pipeline' in name.lower()])
 
-User query: {query}
+            # Execute selected tools
+            tool_results = {}
+            for tool in selected_tools[:5]:  # Limit to 5 tools max
+                try:
+                    # Call tool with appropriate parameters
+                    result = tool()
+                    tool_results[tool.__name__] = str(result)[:1000]  # Limit result size
+                except Exception as e:
+                    tool_results[tool.__name__] = f"Error: {str(e)}"
 
-Provide a helpful response about Databricks workspace administration."""
+            # Synthesize response using LLM
+            if tool_results:
+                results_text = "\n\n".join([f"{name}:\n{result}" for name, result in tool_results.items()])
+                prompt = f"""You are a Databricks admin assistant. Based on the tool execution results below, answer the user's question.
+
+User Question: {query}
+
+Tool Results:
+{results_text}
+
+Provide a clear, concise summary answering the user's question."""
+            else:
+                prompt = f"""You are a Databricks admin assistant. Answer this question:
+
+{query}
+
+Note: No specific tools were selected for this query. Provide general guidance."""
 
             response = self.llm.invoke(prompt)
             return {"response": response.content}
 
-    # Create agent instance
+    # Create agent instance with config
     agent = AdminObservabilityAgent(
         tools=all_tools,
-        llm_endpoint="databricks-meta-llama-3-1-70b-instruct"
+        llm_endpoint="databricks-meta-llama-3-1-70b-instruct",
+        cfg=cfg,
+        warehouse_id=warehouse_id
     )
 
-    print(f"   ✓ Agent created with {len(all_tools)} tools")
+    print(f"   ✓ Agent created with {len(all_tools)} tools and tool execution logic")
 
     # Step 2: Log agent with MLflow using pyfunc
     print("2. Logging agent to MLflow...")
