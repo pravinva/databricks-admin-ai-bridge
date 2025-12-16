@@ -26,8 +26,10 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install databricks-sdk pydantic databricks-agents mlflow
-# MAGIC dbutils.library.restartPython()
+%pip install --upgrade databricks-sdk>=0.23.0 pydantic>=2.0.0 "databricks-agents>=0.3.0" mlflow
+%pip install git+https://github.com/pravinva/databricks-admin-ai-bridge.git
+
+dbutils.library.restartPython()
 
 # COMMAND ----------
 

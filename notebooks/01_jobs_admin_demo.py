@@ -25,14 +25,30 @@
 # COMMAND ----------
 
 from admin_ai_bridge import AdminBridgeConfig, JobsAdmin
+from databricks.sdk import WorkspaceClient
 import pandas as pd
 from datetime import datetime
+import os
 
-# Initialize
+# Initialize configuration
 cfg = AdminBridgeConfig()
-jobs_admin = JobsAdmin(cfg)
 
-print("✓ JobsAdmin initialized successfully")
+# Get warehouse ID for fast system table queries
+warehouse_id = os.environ.get("DATABRICKS_WAREHOUSE_ID")
+if not warehouse_id:
+    ws = WorkspaceClient()
+    try:
+        warehouses = list(ws.warehouses.list(max_results=1))
+        if warehouses:
+            warehouse_id = warehouses[0].id
+            print(f"✓ Using warehouse: {warehouse_id}")
+    except Exception as e:
+        print(f"⚠ Could not find warehouse ID, will use API methods: {e}")
+
+# Initialize with warehouse_id for fast queries
+jobs_admin = JobsAdmin(cfg, warehouse_id=warehouse_id)
+
+print("✓ JobsAdmin initialized successfully (system tables enabled)" if warehouse_id else "✓ JobsAdmin initialized successfully (API mode)")
 
 # COMMAND ----------
 

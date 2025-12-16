@@ -25,15 +25,31 @@
 # COMMAND ----------
 
 from admin_ai_bridge import AdminBridgeConfig, ClustersAdmin
+from databricks.sdk import WorkspaceClient
 import pandas as pd
 from datetime import datetime
 import matplotlib.pyplot as plt
+import os
 
-# Initialize
+# Initialize configuration
 cfg = AdminBridgeConfig()
-clusters_admin = ClustersAdmin(cfg)
 
-print("✓ ClustersAdmin initialized successfully")
+# Get warehouse ID for fast system table queries
+warehouse_id = os.environ.get("DATABRICKS_WAREHOUSE_ID")
+if not warehouse_id:
+    ws = WorkspaceClient()
+    try:
+        warehouses = list(ws.warehouses.list(max_results=1))
+        if warehouses:
+            warehouse_id = warehouses[0].id
+            print(f"✓ Using warehouse: {warehouse_id}")
+    except Exception as e:
+        print(f"⚠ Could not find warehouse ID, will use API methods: {e}")
+
+# Initialize with warehouse_id for fast queries
+clusters_admin = ClustersAdmin(cfg, warehouse_id=warehouse_id)
+
+print("✓ ClustersAdmin initialized successfully (system tables enabled)" if warehouse_id else "✓ ClustersAdmin initialized successfully (API mode)")
 
 # COMMAND ----------
 
