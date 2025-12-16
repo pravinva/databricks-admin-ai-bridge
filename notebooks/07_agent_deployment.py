@@ -307,6 +307,9 @@ Note: No specific tools were selected for this query. Provide general guidance."
 
         response = self.llm.invoke(prompt)
         return {{"response": response.content}}
+
+# Set the model for MLflow code-based logging
+mlflow.models.set_model(AdminObservabilityAgent())
 '''.format(warehouse_id=warehouse_id)
 
     # Write agent code to file
