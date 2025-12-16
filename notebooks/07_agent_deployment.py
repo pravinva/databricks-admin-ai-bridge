@@ -233,19 +233,24 @@ try:
 
     # Step 3: Log with MLflow
     print("3. Logging agent to MLflow...")
+
+    # Use Unity Catalog model name (3-level namespace required)
+    uc_model_name = "main.default.admin_observability_agent"
+
     with mlflow.start_run():
         model_info = mlflow.langchain.log_model(
             lc_model=agent_executor,
             artifact_path="agent",
-            registered_model_name="admin_observability_agent"
+            registered_model_name=uc_model_name
         )
 
     print(f"   Model logged: {model_info.model_uri}")
+    print(f"   Model version: {model_info.registered_model_version}")
 
     # Step 4: Deploy using databricks.agents
     print("4. Deploying to serving endpoint...")
     deployed = agents.deploy(
-        model_name="admin_observability_agent",
+        model_name=uc_model_name,
         model_version=model_info.registered_model_version,
         endpoint_name="admin-observability-agent"
     )
