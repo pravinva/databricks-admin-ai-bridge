@@ -26,7 +26,7 @@
 
 # COMMAND ----------
 
-%pip install --upgrade databricks-sdk>=0.23.0 pydantic>=2.0.0 "databricks-agents>=0.3.0" mlflow
+%pip install --upgrade databricks-sdk>=0.23.0 pydantic>=2.0.0 "databricks-agents>=0.3.0" mlflow databricks-langchain langchain-core
 %pip install --force-reinstall --no-deps git+https://github.com/pravinva/databricks-admin-ai-bridge.git
 
 dbutils.library.restartPython()
@@ -189,6 +189,10 @@ print(f"  ... and {len(all_tools) - 5} more tools")
 # COMMAND ----------
 
 import mlflow
+from databricks_langchain import ChatDatabricks
+from langchain_core.tools import StructuredTool
+from langchain.agents import AgentExecutor, create_react_agent
+from langchain.prompts import PromptTemplate
 
 # Set MLflow to use Databricks backend
 mlflow.set_tracking_uri("databricks")
@@ -204,27 +208,76 @@ try:
     # Use Unity Catalog model name (3-level namespace required)
     uc_model_name = "main.default.admin_observability_agent"
 
-    # Step 1: Log agent with tools using databricks.agents.log_model
-    print("1. Logging agent with tools to MLflow...")
-    print(f"   Using {len(all_tools)} tools from all admin domains")
+    # Step 1: Convert Python function tools to LangChain tools
+    print("1. Converting tools to LangChain format...")
+    langchain_tools = []
+    for func in all_tools:
+        tool = StructuredTool.from_function(
+            func=func,
+            name=func.__name__,
+            description=func.__doc__ or f"Admin tool: {func.__name__}"
+        )
+        langchain_tools.append(tool)
 
+    print(f"   ✓ Converted {len(langchain_tools)} tools to LangChain format")
+
+    # Step 2: Create LangChain agent with Databricks LLM
+    print("2. Creating LangChain agent with ChatDatabricks...")
+    llm = ChatDatabricks(
+        endpoint="databricks-meta-llama-3-1-70b-instruct",
+        temperature=0,
+        max_tokens=4000
+    )
+
+    # Create ReAct-style agent prompt
+    react_prompt = PromptTemplate.from_template(
+        """You are a Databricks admin assistant. Answer questions using the available tools.
+
+Available tools:
+{tools}
+
+Tool names: {tool_names}
+
+Use this format:
+Question: the input question
+Thought: think about what to do
+Action: tool name from [{tool_names}]
+Action Input: tool input as JSON
+Observation: tool result
+... (repeat Thought/Action/Observation as needed)
+Thought: I now know the final answer
+Final Answer: the final answer
+
+Question: {input}
+{agent_scratchpad}"""
+    )
+
+    # Create agent
+    agent = create_react_agent(llm, langchain_tools, react_prompt)
+    agent_executor = AgentExecutor(
+        agent=agent,
+        tools=langchain_tools,
+        verbose=True,
+        handle_parsing_errors=True,
+        max_iterations=10
+    )
+
+    print(f"   ✓ Agent created with {len(langchain_tools)} tools")
+
+    # Step 3: Log agent with MLflow
+    print("3. Logging agent to MLflow...")
     with mlflow.start_run():
-        # Use databricks.agents.log_model() directly (no LangChain wrapping needed)
-        # This API handles the proper Agent Framework format automatically
-        logged_agent_info = agents.log_model(
-            model=f"{ws.config.host}/serving-endpoints/databricks-meta-llama-3-1-70b-instruct",
-            task="chat",
-            artifacts={},
-            tools=all_tools,  # Pass Python functions directly
-            registered_model_name=uc_model_name,
-            example={"messages": [{"role": "user", "content": "Show me failed jobs in the last 24 hours"}]}
+        logged_agent_info = mlflow.langchain.log_model(
+            lc_model=agent_executor,
+            artifact_path="agent",
+            registered_model_name=uc_model_name
         )
 
     print(f"   ✓ Model logged: {logged_agent_info.model_uri}")
     print(f"   ✓ Model version: {logged_agent_info.registered_model_version}")
 
-    # Step 2: Deploy using databricks.agents.deploy
-    print("\n2. Deploying to serving endpoint...")
+    # Step 4: Deploy using databricks.agents.deploy
+    print("\n4. Deploying to serving endpoint...")
     deployed = agents.deploy(
         model_name=uc_model_name,
         model_version=logged_agent_info.registered_model_version,
@@ -238,7 +291,7 @@ try:
     print(f"Endpoint: {deployed.endpoint_name}")
     print(f"Model: {deployed.model_name} v{deployed.model_version}")
     print(f"URL: {ws.config.host}/ml/endpoints/{deployed.endpoint_name}")
-    print(f"Tools: {len(all_tools)} tools across 7 admin domains")
+    print(f"Tools: {len(langchain_tools)} tools across 7 admin domains")
     print("=" * 70)
 
 except Exception as e:
@@ -248,7 +301,7 @@ except Exception as e:
     print("  - Databricks Runtime ML")
     print("  - Access to serving endpoints")
     print("  - Unity Catalog enabled (3-level model names)")
-    print("  - databricks-agents>=0.3.0 installed")
+    print("  - databricks-agents>=0.3.0 and databricks-langchain installed")
     import traceback
     traceback.print_exc()
 
