@@ -30,11 +30,17 @@ import pandas as pd
 from datetime import datetime
 import matplotlib.pyplot as plt
 
-# Initialize
+# Initialize configuration
 cfg = AdminBridgeConfig()
-usage_admin = UsageAdmin(cfg)
 
-print("✓ UsageAdmin initialized successfully")
+# Databricks notebook widget for warehouse_id
+dbutils.widgets.text("warehouse_id", "4b9b953939869799", "SQL Warehouse ID")
+warehouse_id = dbutils.widgets.get("warehouse_id")
+
+# Initialize with warehouse_id for fast system table queries
+usage_admin = UsageAdmin(cfg, warehouse_id=warehouse_id)
+
+print(f"✓ UsageAdmin initialized successfully (system tables enabled with warehouse: {warehouse_id})")
 print(f"Usage table: {usage_admin.usage_table}")
 print(f"Budget table: {usage_admin.budget_table}")
 

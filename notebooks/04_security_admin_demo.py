@@ -29,14 +29,21 @@ import pandas as pd
 from datetime import datetime
 from databricks.sdk import WorkspaceClient
 
-# Initialize
+# Initialize configuration
 cfg = AdminBridgeConfig()
-security_admin = SecurityAdmin(cfg)
-jobs_admin = JobsAdmin(cfg)
-clusters_admin = ClustersAdmin(cfg)
+
+# Databricks notebook widget for warehouse_id
+dbutils.widgets.text("warehouse_id", "4b9b953939869799", "SQL Warehouse ID")
+warehouse_id = dbutils.widgets.get("warehouse_id")
+
+# Initialize admin classes
+security_admin = SecurityAdmin(cfg)  # No system table queries
+jobs_admin = JobsAdmin(cfg, warehouse_id=warehouse_id)
+clusters_admin = ClustersAdmin(cfg, warehouse_id=warehouse_id)
 ws = WorkspaceClient()
 
-print("✓ SecurityAdmin initialized successfully")
+print(f"✓ SecurityAdmin initialized successfully")
+print(f"✓ JobsAdmin and ClustersAdmin initialized with warehouse: {warehouse_id}")
 
 # COMMAND ----------
 

@@ -87,19 +87,11 @@ print(f"✓ Running as user: {current_user.user_name}")
 
 # COMMAND ----------
 
-import os
+# Databricks notebook widget for warehouse_id
+dbutils.widgets.text("warehouse_id", "4b9b953939869799", "SQL Warehouse ID")
+warehouse_id = dbutils.widgets.get("warehouse_id")
 
-# Get warehouse ID from environment or find the first available
-warehouse_id = os.environ.get("DATABRICKS_WAREHOUSE_ID")
-if not warehouse_id:
-    # Try to find the first available warehouse
-    try:
-        warehouses = list(ws.warehouses.list(max_results=1))
-        if warehouses:
-            warehouse_id = warehouses[0].id
-            print(f"✓ Using warehouse: {warehouse_id}")
-    except Exception as e:
-        print(f"⚠ Could not find warehouse ID, will use API methods: {e}")
+print(f"✓ Using warehouse: {warehouse_id}")
 
 # Collect all tools with warehouse_id for fast system table queries
 all_tools = (
