@@ -137,3 +137,4 @@ Thumbs.db
 .databricks/
 *.dbc
 *.dbsql
+mlruns/

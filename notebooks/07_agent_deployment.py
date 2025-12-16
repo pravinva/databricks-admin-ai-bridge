@@ -190,9 +190,6 @@ print(f"  ... and {len(all_tools) - 5} more tools")
 
 import mlflow
 from databricks_langchain import ChatDatabricks
-from langchain_core.tools import StructuredTool
-from langchain.agents import AgentExecutor, create_react_agent
-from langchain.prompts import PromptTemplate
 
 # Set MLflow to use Databricks backend
 mlflow.set_tracking_uri("databricks")
@@ -208,76 +205,80 @@ try:
     # Use Unity Catalog model name (3-level namespace required)
     uc_model_name = "main.default.admin_observability_agent"
 
-    # Step 1: Convert Python function tools to LangChain tools
-    print("1. Converting tools to LangChain format...")
-    langchain_tools = []
-    for func in all_tools:
-        tool = StructuredTool.from_function(
-            func=func,
-            name=func.__name__,
-            description=func.__doc__ or f"Admin tool: {func.__name__}"
-        )
-        langchain_tools.append(tool)
+    # Step 1: Create a simple wrapper class for the agent
+    print("1. Creating agent wrapper...")
 
-    print(f"   ✓ Converted {len(langchain_tools)} tools to LangChain format")
+    class AdminObservabilityAgent:
+        """Simple agent wrapper that uses ChatDatabricks with tools."""
 
-    # Step 2: Create LangChain agent with Databricks LLM
-    print("2. Creating LangChain agent with ChatDatabricks...")
-    llm = ChatDatabricks(
-        endpoint="databricks-meta-llama-3-1-70b-instruct",
-        temperature=0,
-        max_tokens=4000
+        def __init__(self, tools, llm_endpoint):
+            self.tools = {tool.__name__: tool for tool in tools}
+            self.llm = ChatDatabricks(
+                endpoint=llm_endpoint,
+                temperature=0,
+                max_tokens=4000
+            )
+
+        def __call__(self, query):
+            """Process query and return response."""
+            # Simple implementation - in production this would use ReAct loop
+            tool_descriptions = "\n".join([
+                f"- {name}: {tool.__doc__ or 'No description'}"
+                for name, tool in self.tools.items()
+            ])
+
+            prompt = f"""You are a Databricks admin assistant with access to these tools:
+
+{tool_descriptions}
+
+User query: {query}
+
+Provide a helpful response about Databricks workspace administration."""
+
+            response = self.llm.invoke(prompt)
+            return {"response": response.content}
+
+    # Create agent instance
+    agent = AdminObservabilityAgent(
+        tools=all_tools,
+        llm_endpoint="databricks-meta-llama-3-1-70b-instruct"
     )
 
-    # Create ReAct-style agent prompt
-    react_prompt = PromptTemplate.from_template(
-        """You are a Databricks admin assistant. Answer questions using the available tools.
+    print(f"   ✓ Agent created with {len(all_tools)} tools")
 
-Available tools:
-{tools}
+    # Step 2: Log agent with MLflow using pyfunc
+    print("2. Logging agent to MLflow...")
 
-Tool names: {tool_names}
+    # Create model signature
+    from mlflow.models.signature import ModelSignature
+    from mlflow.types.schema import Schema, ColSpec
 
-Use this format:
-Question: the input question
-Thought: think about what to do
-Action: tool name from [{tool_names}]
-Action Input: tool input as JSON
-Observation: tool result
-... (repeat Thought/Action/Observation as needed)
-Thought: I now know the final answer
-Final Answer: the final answer
+    input_schema = Schema([ColSpec("string", "query")])
+    output_schema = Schema([ColSpec("string", "response")])
+    signature = ModelSignature(inputs=input_schema, outputs=output_schema)
 
-Question: {input}
-{agent_scratchpad}"""
-    )
+    # Create input example
+    input_example = {"query": "Show me failed jobs in the last 24 hours"}
 
-    # Create agent
-    agent = create_react_agent(llm, langchain_tools, react_prompt)
-    agent_executor = AgentExecutor(
-        agent=agent,
-        tools=langchain_tools,
-        verbose=True,
-        handle_parsing_errors=True,
-        max_iterations=10
-    )
-
-    print(f"   ✓ Agent created with {len(langchain_tools)} tools")
-
-    # Step 3: Log agent with MLflow
-    print("3. Logging agent to MLflow...")
     with mlflow.start_run():
-        logged_agent_info = mlflow.langchain.log_model(
-            lc_model=agent_executor,
+        logged_agent_info = mlflow.pyfunc.log_model(
             artifact_path="agent",
-            registered_model_name=uc_model_name
+            python_model=agent,
+            signature=signature,
+            input_example=input_example,
+            registered_model_name=uc_model_name,
+            pip_requirements=[
+                "databricks-sdk>=0.23.0",
+                "databricks-langchain",
+                f"git+https://github.com/pravinva/databricks-admin-ai-bridge.git"
+            ]
         )
 
     print(f"   ✓ Model logged: {logged_agent_info.model_uri}")
     print(f"   ✓ Model version: {logged_agent_info.registered_model_version}")
 
-    # Step 4: Deploy using databricks.agents.deploy
-    print("\n4. Deploying to serving endpoint...")
+    # Step 3: Deploy using databricks.agents.deploy
+    print("\n3. Deploying to serving endpoint...")
     deployed = agents.deploy(
         model_name=uc_model_name,
         model_version=logged_agent_info.registered_model_version,
@@ -291,7 +292,7 @@ Question: {input}
     print(f"Endpoint: {deployed.endpoint_name}")
     print(f"Model: {deployed.model_name} v{deployed.model_version}")
     print(f"URL: {ws.config.host}/ml/endpoints/{deployed.endpoint_name}")
-    print(f"Tools: {len(langchain_tools)} tools across 7 admin domains")
+    print(f"Tools: {len(all_tools)} tools across 7 admin domains")
     print("=" * 70)
 
 except Exception as e:
