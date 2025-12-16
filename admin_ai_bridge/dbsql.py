@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.sql import QueryStatus
+from databricks.sdk.service.sql import QueryStatus, QueryFilter, TimeRange
 
 from .config import AdminBridgeConfig, get_workspace_client
 from .errors import APIError, ValidationError
@@ -101,17 +101,27 @@ class DBSQLAdmin:
         queries = []
 
         try:
-            # Use query history API
-            # Note: The SDK's query_history.list() method filters by time
-            query_filter = {
-                "start_time_from": int(start_time.timestamp() * 1000),
-                "start_time_to": int(now.timestamp() * 1000),
-            }
+            # Use query history API with proper QueryFilter and TimeRange objects
+            query_filter = QueryFilter(
+                query_start_time_range=TimeRange(
+                    start_time_ms=int(start_time.timestamp() * 1000),
+                    end_time_ms=int(now.timestamp() * 1000),
+                )
+            )
 
-            history = self.ws.query_history.list(
+            history_response = self.ws.query_history.list(
                 filter_by=query_filter,
                 max_results=1000,  # Get more than needed to ensure we find the slowest
             )
+
+            # Extract the list of queries from the response
+            # Handle both real response objects and mocked lists
+            if isinstance(history_response, list):
+                history = history_response
+            elif history_response and hasattr(history_response, 'res'):
+                history = history_response.res if history_response.res else []
+            else:
+                history = []
 
             for query_info in history:
                 if not query_info.query_id:
@@ -234,20 +244,36 @@ class DBSQLAdmin:
         warehouses = set()
 
         try:
-            # Use query history API with user filter
-            query_filter = {
-                "user_name": user_name,
-                "start_time_from": int(start_time.timestamp() * 1000),
-                "start_time_to": int(now.timestamp() * 1000),
-            }
+            # Use query history API with proper QueryFilter and TimeRange objects
+            # Note: user filtering is done via user_ids, not user_name
+            # For now, we'll filter by time and then by user_name in code
+            query_filter = QueryFilter(
+                query_start_time_range=TimeRange(
+                    start_time_ms=int(start_time.timestamp() * 1000),
+                    end_time_ms=int(now.timestamp() * 1000),
+                )
+            )
 
-            history = self.ws.query_history.list(
+            history_response = self.ws.query_history.list(
                 filter_by=query_filter,
                 max_results=1000,
             )
 
+            # Extract the list of queries from the response
+            # Handle both real response objects and mocked lists
+            if isinstance(history_response, list):
+                history = history_response
+            elif history_response and hasattr(history_response, 'res'):
+                history = history_response.res if history_response.res else []
+            else:
+                history = []
+
             for query_info in history:
                 if not query_info.query_id:
+                    continue
+
+                # Filter by user_name (since API doesn't support filtering by name directly)
+                if query_info.user_name != user_name:
                     continue
 
                 total_queries += 1
