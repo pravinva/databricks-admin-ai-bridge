@@ -121,7 +121,7 @@ print("-" * 60)
 # List all tool names
 print("\nAvailable Tools:")
 for i, tool in enumerate(all_tools, 1):
-    print(f"  {i}. {tool.name}")
+    print(f"  {i}. {tool.__name__}")
 
 # COMMAND ----------
 
@@ -189,11 +189,18 @@ print(f"  ... and {len(all_tools) - 5} more tools")
 # COMMAND ----------
 
 import mlflow
-from langchain.agents import create_tool_calling_agent
+try:
+    # Try new LangChain 0.3.x imports
+    from langchain.agents import create_tool_calling_agent
+except ImportError:
+    # Fall back to custom implementation for older versions
+    create_tool_calling_agent = None
+
 from langchain.agents.agent import AgentExecutor
 from langchain_community.chat_models import ChatDatabricks
 from langchain.prompts import ChatPromptTemplate
 from langchain.tools import StructuredTool
+from langchain.agents import initialize_agent, AgentType
 
 # Set MLflow experiment
 mlflow.set_experiment("/Users/{}/admin_observability_agent".format(current_user.user_name))
@@ -220,14 +227,14 @@ try:
     print("2. Creating LangChain agent...")
     llm = ChatDatabricks(endpoint="databricks-meta-llama-3-1-70b-instruct")
 
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
-        ("human", "{input}"),
-        ("placeholder", "{agent_scratchpad}"),
-    ])
-
-    agent = create_tool_calling_agent(llm, langchain_tools, prompt)
-    agent_executor = AgentExecutor(agent=agent, tools=langchain_tools, verbose=True)
+    # Use initialize_agent for compatibility with LangChain 1.x
+    agent_executor = initialize_agent(
+        tools=langchain_tools,
+        llm=llm,
+        agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
+        verbose=True,
+        handle_parsing_errors=True
+    )
 
     print("   Agent created successfully")
 
