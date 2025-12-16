@@ -104,11 +104,15 @@ except Exception as e:
 
 # COMMAND ----------
 
-import os
+# MAGIC %md
+# MAGIC ### Warehouse ID Configuration
+# MAGIC Enter your SQL warehouse ID below for fast system table queries (10-100x faster than API).
 
-# Use warehouse ID for fast system table queries (10-100x faster than API)
-# Replace with your warehouse ID if needed
-warehouse_id = "4b9b953939869799"
+# COMMAND ----------
+
+# Databricks notebook widget for warehouse_id
+dbutils.widgets.text("warehouse_id", "4b9b953939869799", "SQL Warehouse ID")
+warehouse_id = dbutils.widgets.get("warehouse_id")
 print(f"✓ Using warehouse: {warehouse_id}")
 
 if warehouse_id:

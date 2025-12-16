@@ -100,11 +100,18 @@ class PipelinesAdmin:
         lagging_pipelines = []
 
         try:
-            # List all pipelines
-            pipelines = list(self.ws.pipelines.list_pipelines())
-            logger.debug(f"Found {len(pipelines)} total pipelines")
+            # List pipelines (iterator, not all at once for better performance)
+            pipelines_iterator = self.ws.pipelines.list_pipelines()
+            pipeline_count = 0
 
-            for pipeline in pipelines:
+            for pipeline in pipelines_iterator:
+                pipeline_count += 1
+
+                # Safety limit to avoid iterating through thousands of pipelines
+                if pipeline_count > 1000:
+                    logger.info(f"Reached safety limit of 1000 pipelines checked")
+                    break
+
                 if not pipeline.pipeline_id:
                     continue
 
@@ -188,11 +195,14 @@ class PipelinesAdmin:
 
                         # Stop if we've reached the limit
                         if len(lagging_pipelines) >= limit:
+                            logger.info(f"Found {limit} lagging pipelines, stopping search")
                             break
 
                 except Exception as e:
                     logger.warning(f"Error processing pipeline {pipeline.pipeline_id}: {e}")
                     continue
+
+            logger.debug(f"Checked {pipeline_count} pipelines total")
 
         except Exception as e:
             logger.error(f"Error listing lagging pipelines: {e}")
@@ -252,11 +262,18 @@ class PipelinesAdmin:
         failed_pipelines = []
 
         try:
-            # List all pipelines
-            pipelines = list(self.ws.pipelines.list_pipelines())
-            logger.debug(f"Found {len(pipelines)} total pipelines")
+            # List pipelines (iterator, not all at once for better performance)
+            pipelines_iterator = self.ws.pipelines.list_pipelines()
+            pipeline_count = 0
 
-            for pipeline in pipelines:
+            for pipeline in pipelines_iterator:
+                pipeline_count += 1
+
+                # Safety limit to avoid iterating through thousands of pipelines
+                if pipeline_count > 1000:
+                    logger.info(f"Reached safety limit of 1000 pipelines checked")
+                    break
+
                 if not pipeline.pipeline_id:
                     continue
 
@@ -334,11 +351,14 @@ class PipelinesAdmin:
 
                         # Stop if we've reached the limit
                         if len(failed_pipelines) >= limit:
+                            logger.info(f"Found {limit} failed pipelines, stopping search")
                             break
 
                 except Exception as e:
                     logger.warning(f"Error processing pipeline {pipeline.pipeline_id}: {e}")
                     continue
+
+            logger.debug(f"Checked {pipeline_count} pipelines total")
 
         except Exception as e:
             logger.error(f"Error listing failed pipelines: {e}")
