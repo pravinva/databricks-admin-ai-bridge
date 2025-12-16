@@ -185,7 +185,7 @@ class AuditAdmin:
             statement = self.ws.statement_execution.execute_statement(
                 warehouse_id=warehouse_id,
                 statement=sql,
-                wait_timeout="5m"  # Increased timeout for warehouse startup
+                wait_timeout="50s"  # Maximum allowed by Databricks API
             )
 
             # Parse results into AuditEvent objects
@@ -329,7 +329,7 @@ class AuditAdmin:
             statement = self.ws.statement_execution.execute_statement(
                 warehouse_id=warehouse_id,
                 statement=sql,
-                wait_timeout="5m"  # Increased timeout for warehouse startup
+                wait_timeout="50s"  # Maximum allowed by Databricks API
             )
 
             # Parse results into AuditEvent objects
