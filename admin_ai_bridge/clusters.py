@@ -32,31 +32,55 @@ class ClustersAdmin:
 
     Attributes:
         ws: WorkspaceClient instance for API access
+        warehouse_id: Optional SQL warehouse ID for system table queries
     """
 
-    def __init__(self, cfg: AdminBridgeConfig | None = None):
+    def __init__(self, cfg: AdminBridgeConfig | None = None, warehouse_id: str | None = None):
         """
         Initialize ClustersAdmin with optional configuration.
 
         Args:
             cfg: AdminBridgeConfig instance. If None, uses default credentials.
+            warehouse_id: Optional SQL warehouse ID for faster system table queries.
+                If None, will fall back to API methods.
 
         Examples:
             >>> # Using profile
             >>> cfg = AdminBridgeConfig(profile="DEFAULT")
             >>> clusters_admin = ClustersAdmin(cfg)
 
-            >>> # Using default credentials
-            >>> clusters_admin = ClustersAdmin()
+            >>> # Using default credentials with warehouse for faster queries
+            >>> clusters_admin = ClustersAdmin(warehouse_id="abc123def456")
         """
         self.ws = get_workspace_client(cfg)
-        logger.info("ClustersAdmin initialized")
+        self.warehouse_id = warehouse_id
+        logger.info(f"ClustersAdmin initialized (warehouse_id={warehouse_id})")
+
+    def _get_default_warehouse_id(self) -> str:
+        """
+        Get the default SQL warehouse ID.
+
+        Returns:
+            The ID of the first available SQL warehouse.
+
+        Raises:
+            APIError: If no warehouse is available.
+        """
+        try:
+            warehouses = list(self.ws.warehouses.list())
+            if not warehouses:
+                raise APIError("No SQL warehouses available")
+            return warehouses[0].id
+        except Exception as e:
+            logger.error(f"Error getting default warehouse: {e}")
+            raise APIError(f"Failed to get default warehouse: {e}")
 
     def list_long_running_clusters(
         self,
         min_duration_hours: float = 8.0,
         lookback_hours: float = 24.0,
         limit: int = 100,
+        warehouse_id: str | None = None,
     ) -> List[ClusterSummary]:
         """
         List clusters that have been running longer than the specified threshold.
@@ -74,6 +98,8 @@ class ClustersAdmin:
                 and have been running longer than min_duration_hours)
             limit: Maximum number of results to return. Must be positive.
                 Default: 100.
+            warehouse_id: Optional SQL warehouse ID for faster system table queries.
+                If provided, uses system tables. Otherwise falls back to API.
 
         Returns:
             List of ClusterSummary objects sorted by runtime duration (longest first).
@@ -105,6 +131,105 @@ class ClustersAdmin:
         logger.info(
             f"Searching for clusters running > {min_duration_hours}h in last {lookback_hours}h"
         )
+
+        # Try SQL first if warehouse available
+        if warehouse_id or self.warehouse_id:
+            wh_id = warehouse_id or self.warehouse_id
+            try:
+                logger.info(f"Using system tables (warehouse: {wh_id})")
+                return self._list_long_running_clusters_sql(min_duration_hours, lookback_hours, limit, wh_id)
+            except Exception as e:
+                logger.warning(f"System table query failed, falling back to API: {e}")
+
+        # Fall back to API
+        logger.info("Using API method")
+        return self._list_long_running_clusters_api(min_duration_hours, lookback_hours, limit)
+
+    def _list_long_running_clusters_sql(
+        self,
+        min_duration_hours: float,
+        lookback_hours: float,
+        limit: int,
+        warehouse_id: str,
+    ) -> List[ClusterSummary]:
+        """Query long-running clusters from system.compute tables (fast)."""
+
+        now = datetime.now(timezone.utc)
+        start_time = now - timedelta(hours=lookback_hours)
+        start_time_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
+
+        sql = f"""
+        SELECT
+            c.cluster_id,
+            c.cluster_name,
+            c.state,
+            c.owned_by as creator,
+            c.driver_node_type,
+            c.worker_node_type,
+            c.policy_id,
+            MIN(n.start_time) as start_time,
+            MAX(n.start_time) as last_activity_time
+        FROM system.compute.clusters c
+        INNER JOIN system.compute.node_timeline n
+            ON c.cluster_id = n.cluster_id
+        WHERE n.end_time IS NULL  -- Currently running
+          AND c.delete_time IS NULL
+          AND n.start_time >= '{start_time_str}'
+        GROUP BY c.cluster_id, c.cluster_name, c.state, c.owned_by, c.driver_node_type, c.worker_node_type, c.policy_id
+        HAVING timestampdiff(HOUR, MIN(n.start_time), current_timestamp()) >= {min_duration_hours}
+        ORDER BY start_time ASC
+        LIMIT {limit}
+        """
+
+        try:
+            logger.debug(f"Executing SQL query: {sql}")
+            statement = self.ws.statement_execution.execute_statement(
+                warehouse_id=warehouse_id,
+                statement=sql,
+                wait_timeout="30s"
+            )
+
+            long_running_clusters = []
+            if statement.result and statement.result.data_array:
+                for row in statement.result.data_array:
+                    cluster_id = str(row[0]) if row[0] is not None else "unknown"
+                    cluster_name = str(row[1]) if row[1] is not None else f"Cluster {cluster_id}"
+                    state = str(row[2]) if row[2] is not None else "UNKNOWN"
+                    creator = str(row[3]) if row[3] is not None else None
+                    driver_node_type = str(row[4]) if row[4] is not None else None
+                    worker_node_type = str(row[5]) if row[5] is not None else None
+                    policy_id = str(row[6]) if row[6] is not None else None
+                    start_time_val = datetime.fromisoformat(row[7]) if row[7] else None
+                    last_activity = datetime.fromisoformat(row[8]) if row[8] else None
+
+                    cluster_summary = ClusterSummary(
+                        cluster_id=cluster_id,
+                        cluster_name=cluster_name,
+                        state=state,
+                        creator=creator,
+                        start_time=start_time_val,
+                        driver_node_type=driver_node_type,
+                        node_type=worker_node_type,
+                        cluster_policy_id=policy_id,
+                        last_activity_time=last_activity,
+                        is_long_running=True,
+                    )
+                    long_running_clusters.append(cluster_summary)
+
+            logger.info(f"Found {len(long_running_clusters)} long-running clusters via SQL")
+            return long_running_clusters
+
+        except Exception as e:
+            logger.error(f"Error executing SQL query: {e}")
+            raise APIError(f"Failed to query long-running clusters from system tables: {e}")
+
+    def _list_long_running_clusters_api(
+        self,
+        min_duration_hours: float,
+        lookback_hours: float,
+        limit: int,
+    ) -> List[ClusterSummary]:
+        """Query long-running clusters using API calls (slower)."""
 
         # Calculate time window
         now = datetime.now(timezone.utc)
@@ -228,13 +353,14 @@ class ClustersAdmin:
             key=lambda x: x.start_time if x.start_time else datetime.max.replace(tzinfo=timezone.utc)
         )
 
-        logger.info(f"Found {len(long_running_clusters)} long-running clusters")
+        logger.info(f"Found {len(long_running_clusters)} long-running clusters via API")
         return long_running_clusters[:limit]
 
     def list_idle_clusters(
         self,
         idle_hours: float = 2.0,
         limit: int = 100,
+        warehouse_id: str | None = None,
     ) -> List[ClusterSummary]:
         """
         List clusters with no activity in the last N hours.
@@ -248,6 +374,8 @@ class ClustersAdmin:
                 Must be positive. Default: 2.0 hours.
             limit: Maximum number of results to return. Must be positive.
                 Default: 100.
+            warehouse_id: Optional SQL warehouse ID for faster system table queries.
+                If provided, uses system tables. Otherwise falls back to API.
 
         Returns:
             List of ClusterSummary objects sorted by last activity time (least recent first).
@@ -273,6 +401,103 @@ class ClustersAdmin:
             raise ValidationError("limit must be positive")
 
         logger.info(f"Searching for clusters idle > {idle_hours}h")
+
+        # Try SQL first if warehouse available
+        if warehouse_id or self.warehouse_id:
+            wh_id = warehouse_id or self.warehouse_id
+            try:
+                logger.info(f"Using system tables (warehouse: {wh_id})")
+                return self._list_idle_clusters_sql(idle_hours, limit, wh_id)
+            except Exception as e:
+                logger.warning(f"System table query failed, falling back to API: {e}")
+
+        # Fall back to API
+        logger.info("Using API method")
+        return self._list_idle_clusters_api(idle_hours, limit)
+
+    def _list_idle_clusters_sql(
+        self,
+        idle_hours: float,
+        limit: int,
+        warehouse_id: str,
+    ) -> List[ClusterSummary]:
+        """Query idle clusters from system.compute tables (fast)."""
+
+        now = datetime.now(timezone.utc)
+        idle_threshold = now - timedelta(hours=idle_hours)
+        idle_threshold_str = idle_threshold.strftime("%Y-%m-%d %H:%M:%S")
+
+        sql = f"""
+        SELECT
+            c.cluster_id,
+            c.cluster_name,
+            c.state,
+            c.owned_by as creator,
+            c.driver_node_type,
+            c.worker_node_type,
+            c.policy_id,
+            MIN(n.start_time) as start_time,
+            MAX(n.start_time) as last_activity_time
+        FROM system.compute.clusters c
+        INNER JOIN system.compute.node_timeline n
+            ON c.cluster_id = n.cluster_id
+        WHERE n.end_time IS NULL  -- Currently running
+          AND c.delete_time IS NULL
+          AND c.state = 'RUNNING'
+        GROUP BY c.cluster_id, c.cluster_name, c.state, c.owned_by, c.driver_node_type, c.worker_node_type, c.policy_id
+        HAVING MAX(n.start_time) < '{idle_threshold_str}'
+        ORDER BY last_activity_time ASC
+        LIMIT {limit}
+        """
+
+        try:
+            logger.debug(f"Executing SQL query: {sql}")
+            statement = self.ws.statement_execution.execute_statement(
+                warehouse_id=warehouse_id,
+                statement=sql,
+                wait_timeout="30s"
+            )
+
+            idle_clusters = []
+            if statement.result and statement.result.data_array:
+                for row in statement.result.data_array:
+                    cluster_id = str(row[0]) if row[0] is not None else "unknown"
+                    cluster_name = str(row[1]) if row[1] is not None else f"Cluster {cluster_id}"
+                    state = str(row[2]) if row[2] is not None else "UNKNOWN"
+                    creator = str(row[3]) if row[3] is not None else None
+                    driver_node_type = str(row[4]) if row[4] is not None else None
+                    worker_node_type = str(row[5]) if row[5] is not None else None
+                    policy_id = str(row[6]) if row[6] is not None else None
+                    start_time_val = datetime.fromisoformat(row[7]) if row[7] else None
+                    last_activity = datetime.fromisoformat(row[8]) if row[8] else None
+
+                    cluster_summary = ClusterSummary(
+                        cluster_id=cluster_id,
+                        cluster_name=cluster_name,
+                        state=state,
+                        creator=creator,
+                        start_time=start_time_val,
+                        driver_node_type=driver_node_type,
+                        node_type=worker_node_type,
+                        cluster_policy_id=policy_id,
+                        last_activity_time=last_activity,
+                        is_long_running=None,
+                    )
+                    idle_clusters.append(cluster_summary)
+
+            logger.info(f"Found {len(idle_clusters)} idle clusters via SQL")
+            return idle_clusters
+
+        except Exception as e:
+            logger.error(f"Error executing SQL query: {e}")
+            raise APIError(f"Failed to query idle clusters from system tables: {e}")
+
+    def _list_idle_clusters_api(
+        self,
+        idle_hours: float,
+        limit: int,
+    ) -> List[ClusterSummary]:
+        """Query idle clusters using API calls (slower)."""
 
         # Calculate idle threshold
         now = datetime.now(timezone.utc)
@@ -402,5 +627,5 @@ class ClustersAdmin:
             key=lambda x: x.last_activity_time if x.last_activity_time else datetime.min.replace(tzinfo=timezone.utc)
         )
 
-        logger.info(f"Found {len(idle_clusters)} idle clusters")
+        logger.info(f"Found {len(idle_clusters)} idle clusters via API")
         return idle_clusters[:limit]

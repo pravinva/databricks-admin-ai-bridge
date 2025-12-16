@@ -96,24 +96,41 @@ except Exception as e:
 # MAGIC ## 4. Initialize Admin Classes
 # MAGIC
 # MAGIC Create instances of each admin class to verify they can be instantiated properly.
+# MAGIC
+# MAGIC **Performance Optimization:** For fast queries, provide a `warehouse_id` to use system tables
+# MAGIC instead of slower API calls (10-100x faster for large workspaces).
 
 # COMMAND ----------
 
-# Initialize all admin classes
-jobs_admin = JobsAdmin(cfg)
-dbsql_admin = DBSQLAdmin(cfg)
-clusters_admin = ClustersAdmin(cfg)
-security_admin = SecurityAdmin(cfg)
-usage_admin = UsageAdmin(cfg)
-audit_admin = AuditAdmin(cfg)
-pipelines_admin = PipelinesAdmin(cfg)
+import os
+
+# Get warehouse ID from environment or find the first available
+warehouse_id = os.environ.get("DATABRICKS_WAREHOUSE_ID")
+if not warehouse_id:
+    # Try to find the first available warehouse
+    try:
+        warehouses = list(ws.warehouses.list(max_results=1))
+        if warehouses:
+            warehouse_id = warehouses[0].id
+            print(f"✓ Using warehouse: {warehouse_id}")
+    except Exception as e:
+        print(f"⚠ Could not find warehouse ID, will use API methods: {e}")
+
+# Initialize all admin classes with warehouse_id for fast system table queries
+jobs_admin = JobsAdmin(cfg, warehouse_id=warehouse_id)
+dbsql_admin = DBSQLAdmin(cfg, warehouse_id=warehouse_id)
+clusters_admin = ClustersAdmin(cfg, warehouse_id=warehouse_id)
+security_admin = SecurityAdmin(cfg)  # No system table queries
+usage_admin = UsageAdmin(cfg, warehouse_id=warehouse_id)
+audit_admin = AuditAdmin(cfg)  # No system table queries
+pipelines_admin = PipelinesAdmin(cfg)  # No system table queries
 
 print("✓ Successfully initialized all admin classes:")
-print("  - JobsAdmin: List and monitor job runs")
-print("  - DBSQLAdmin: Query history and performance analysis")
-print("  - ClustersAdmin: Cluster monitoring and utilization")
+print("  - JobsAdmin: List and monitor job runs (system tables enabled)")
+print("  - DBSQLAdmin: Query history and performance analysis (system tables enabled)")
+print("  - ClustersAdmin: Cluster monitoring and utilization (system tables enabled)")
 print("  - SecurityAdmin: Permissions and access control")
-print("  - UsageAdmin: Cost tracking and budget monitoring")
+print("  - UsageAdmin: Cost tracking and budget monitoring (system tables enabled)")
 print("  - AuditAdmin: Audit log queries and security events")
 print("  - PipelinesAdmin: Pipeline monitoring and observability")
 

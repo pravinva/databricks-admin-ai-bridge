@@ -32,31 +32,55 @@ class JobsAdmin:
 
     Attributes:
         ws: WorkspaceClient instance for API access
+        warehouse_id: Optional SQL warehouse ID for system table queries
     """
 
-    def __init__(self, cfg: AdminBridgeConfig | None = None):
+    def __init__(self, cfg: AdminBridgeConfig | None = None, warehouse_id: str | None = None):
         """
         Initialize JobsAdmin with optional configuration.
 
         Args:
             cfg: AdminBridgeConfig instance. If None, uses default credentials.
+            warehouse_id: Optional SQL warehouse ID for faster system table queries.
+                If None, will fall back to API methods.
 
         Examples:
             >>> # Using profile
             >>> cfg = AdminBridgeConfig(profile="DEFAULT")
             >>> jobs_admin = JobsAdmin(cfg)
 
-            >>> # Using default credentials
-            >>> jobs_admin = JobsAdmin()
+            >>> # Using default credentials with warehouse for faster queries
+            >>> jobs_admin = JobsAdmin(warehouse_id="abc123def456")
         """
         self.ws = get_workspace_client(cfg)
-        logger.info("JobsAdmin initialized")
+        self.warehouse_id = warehouse_id
+        logger.info(f"JobsAdmin initialized (warehouse_id={warehouse_id})")
+
+    def _get_default_warehouse_id(self) -> str:
+        """
+        Get the default SQL warehouse ID.
+
+        Returns:
+            The ID of the first available SQL warehouse.
+
+        Raises:
+            APIError: If no warehouse is available.
+        """
+        try:
+            warehouses = list(self.ws.warehouses.list())
+            if not warehouses:
+                raise APIError("No SQL warehouses available")
+            return warehouses[0].id
+        except Exception as e:
+            logger.error(f"Error getting default warehouse: {e}")
+            raise APIError(f"Failed to get default warehouse: {e}")
 
     def list_long_running_jobs(
         self,
         min_duration_hours: float = 4.0,
         lookback_hours: float = 24.0,
         limit: int = 100,
+        warehouse_id: str | None = None,
     ) -> List[JobRunSummary]:
         """
         List job runs with duration exceeding the specified threshold.
@@ -71,6 +95,8 @@ class JobsAdmin:
                 Default: 24.0 hours.
             limit: Maximum number of results to return. Must be positive.
                 Default: 100.
+            warehouse_id: Optional SQL warehouse ID for faster system table queries.
+                If provided, uses system tables. Otherwise falls back to API.
 
         Returns:
             List of JobRunSummary objects sorted by duration (longest first).
@@ -101,6 +127,98 @@ class JobsAdmin:
         logger.info(
             f"Searching for jobs running > {min_duration_hours}h in last {lookback_hours}h"
         )
+
+        # Try SQL first if warehouse available
+        if warehouse_id or self.warehouse_id:
+            wh_id = warehouse_id or self.warehouse_id
+            try:
+                logger.info(f"Using system tables (warehouse: {wh_id})")
+                return self._list_long_running_jobs_sql(min_duration_hours, lookback_hours, limit, wh_id)
+            except Exception as e:
+                logger.warning(f"System table query failed, falling back to API: {e}")
+
+        # Fall back to API
+        logger.info("Using API method")
+        return self._list_long_running_jobs_api(min_duration_hours, lookback_hours, limit)
+
+    def _list_long_running_jobs_sql(
+        self,
+        min_duration_hours: float,
+        lookback_hours: float,
+        limit: int,
+        warehouse_id: str,
+    ) -> List[JobRunSummary]:
+        """Query long-running jobs from system.workflow tables (fast)."""
+
+        now = datetime.now(timezone.utc)
+        start_time = now - timedelta(hours=lookback_hours)
+        start_time_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
+        min_duration_ms = min_duration_hours * 3600 * 1000
+
+        sql = f"""
+        SELECT
+            t.job_id,
+            t.job_name,
+            t.run_id,
+            t.result_state,
+            t.life_cycle_state,
+            t.start_time,
+            t.end_time,
+            t.execution_duration as duration_ms
+        FROM system.workflow.job_task_run_timeline t
+        WHERE t.start_time >= '{start_time_str}'
+          AND t.execution_duration >= {min_duration_ms}
+        ORDER BY t.execution_duration DESC
+        LIMIT {limit}
+        """
+
+        try:
+            logger.debug(f"Executing SQL query: {sql}")
+            statement = self.ws.statement_execution.execute_statement(
+                warehouse_id=warehouse_id,
+                statement=sql,
+                wait_timeout="30s"
+            )
+
+            long_running_jobs = []
+            if statement.result and statement.result.data_array:
+                for row in statement.result.data_array:
+                    job_id = int(row[0]) if row[0] is not None else 0
+                    job_name = str(row[1]) if row[1] is not None else f"Job {job_id}"
+                    run_id = int(row[2]) if row[2] is not None else 0
+                    result_state = str(row[3]) if row[3] is not None else "UNKNOWN"
+                    life_cycle_state = str(row[4]) if row[4] is not None else None
+                    start_time_val = datetime.fromisoformat(row[5]) if row[5] else None
+                    end_time_val = datetime.fromisoformat(row[6]) if row[6] else None
+                    duration_ms = float(row[7]) if row[7] is not None else 0
+                    duration_seconds = duration_ms / 1000.0
+
+                    job_summary = JobRunSummary(
+                        job_id=job_id,
+                        job_name=job_name,
+                        run_id=run_id,
+                        state=result_state,
+                        life_cycle_state=life_cycle_state,
+                        start_time=start_time_val,
+                        end_time=end_time_val,
+                        duration_seconds=duration_seconds,
+                    )
+                    long_running_jobs.append(job_summary)
+
+            logger.info(f"Found {len(long_running_jobs)} long-running jobs via SQL")
+            return long_running_jobs
+
+        except Exception as e:
+            logger.error(f"Error executing SQL query: {e}")
+            raise APIError(f"Failed to query long-running jobs from system tables: {e}")
+
+    def _list_long_running_jobs_api(
+        self,
+        min_duration_hours: float,
+        lookback_hours: float,
+        limit: int,
+    ) -> List[JobRunSummary]:
+        """Query long-running jobs using API calls (slower)."""
 
         # Calculate time window
         now = datetime.now(timezone.utc)
@@ -210,13 +328,14 @@ class JobsAdmin:
         # Sort by duration (longest first)
         long_running_jobs.sort(key=lambda x: x.duration_seconds or 0, reverse=True)
 
-        logger.info(f"Found {len(long_running_jobs)} long-running jobs")
+        logger.info(f"Found {len(long_running_jobs)} long-running jobs via API")
         return long_running_jobs[:limit]
 
     def list_failed_jobs(
         self,
         lookback_hours: float = 24.0,
         limit: int = 100,
+        warehouse_id: str | None = None,
     ) -> List[JobRunSummary]:
         """
         List failed job runs within the specified time window.
@@ -229,6 +348,8 @@ class JobsAdmin:
                 Default: 24.0 hours.
             limit: Maximum number of results to return. Must be positive.
                 Default: 100.
+            warehouse_id: Optional SQL warehouse ID for faster system table queries.
+                If provided, uses system tables. Otherwise falls back to API.
 
         Returns:
             List of JobRunSummary objects for failed runs, sorted by start time (newest first).
@@ -252,6 +373,95 @@ class JobsAdmin:
             raise ValidationError("limit must be positive")
 
         logger.info(f"Searching for failed jobs in last {lookback_hours}h")
+
+        # Try SQL first if warehouse available
+        if warehouse_id or self.warehouse_id:
+            wh_id = warehouse_id or self.warehouse_id
+            try:
+                logger.info(f"Using system tables (warehouse: {wh_id})")
+                return self._list_failed_jobs_sql(lookback_hours, limit, wh_id)
+            except Exception as e:
+                logger.warning(f"System table query failed, falling back to API: {e}")
+
+        # Fall back to API
+        logger.info("Using API method")
+        return self._list_failed_jobs_api(lookback_hours, limit)
+
+    def _list_failed_jobs_sql(
+        self,
+        lookback_hours: float,
+        limit: int,
+        warehouse_id: str,
+    ) -> List[JobRunSummary]:
+        """Query failed jobs from system.workflow tables (fast)."""
+
+        now = datetime.now(timezone.utc)
+        start_time = now - timedelta(hours=lookback_hours)
+        start_time_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
+
+        sql = f"""
+        SELECT
+            t.job_id,
+            t.job_name,
+            t.run_id,
+            t.result_state,
+            t.life_cycle_state,
+            t.start_time,
+            t.end_time,
+            t.execution_duration as duration_ms
+        FROM system.workflow.job_task_run_timeline t
+        WHERE t.start_time >= '{start_time_str}'
+          AND t.result_state IN ('FAILED', 'TIMEDOUT', 'CANCELED')
+        ORDER BY t.start_time DESC
+        LIMIT {limit}
+        """
+
+        try:
+            logger.debug(f"Executing SQL query: {sql}")
+            statement = self.ws.statement_execution.execute_statement(
+                warehouse_id=warehouse_id,
+                statement=sql,
+                wait_timeout="30s"
+            )
+
+            failed_jobs = []
+            if statement.result and statement.result.data_array:
+                for row in statement.result.data_array:
+                    job_id = int(row[0]) if row[0] is not None else 0
+                    job_name = str(row[1]) if row[1] is not None else f"Job {job_id}"
+                    run_id = int(row[2]) if row[2] is not None else 0
+                    result_state = str(row[3]) if row[3] is not None else "FAILED"
+                    life_cycle_state = str(row[4]) if row[4] is not None else None
+                    start_time_val = datetime.fromisoformat(row[5]) if row[5] else None
+                    end_time_val = datetime.fromisoformat(row[6]) if row[6] else None
+                    duration_ms = float(row[7]) if row[7] is not None else 0
+                    duration_seconds = duration_ms / 1000.0 if duration_ms else None
+
+                    job_summary = JobRunSummary(
+                        job_id=job_id,
+                        job_name=job_name,
+                        run_id=run_id,
+                        state=result_state,
+                        life_cycle_state=life_cycle_state,
+                        start_time=start_time_val,
+                        end_time=end_time_val,
+                        duration_seconds=duration_seconds,
+                    )
+                    failed_jobs.append(job_summary)
+
+            logger.info(f"Found {len(failed_jobs)} failed jobs via SQL")
+            return failed_jobs
+
+        except Exception as e:
+            logger.error(f"Error executing SQL query: {e}")
+            raise APIError(f"Failed to query failed jobs from system tables: {e}")
+
+    def _list_failed_jobs_api(
+        self,
+        lookback_hours: float,
+        limit: int,
+    ) -> List[JobRunSummary]:
+        """Query failed jobs using API calls (slower)."""
 
         # Calculate time window
         now = datetime.now(timezone.utc)
@@ -360,5 +570,5 @@ class JobsAdmin:
             reverse=True
         )
 
-        logger.info(f"Found {len(failed_jobs)} failed jobs")
+        logger.info(f"Found {len(failed_jobs)} failed jobs via API")
         return failed_jobs[:limit]

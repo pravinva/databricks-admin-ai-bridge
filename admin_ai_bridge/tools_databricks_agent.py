@@ -35,7 +35,7 @@ from .audit import AuditAdmin
 from .pipelines import PipelinesAdmin
 
 
-def jobs_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[Callable]:
+def jobs_admin_tools(cfg: AdminBridgeConfig | None = None, warehouse_id: str | None = None) -> List[Callable]:
     """
     Create Python functions for Jobs administration to use with Databricks agents.
 
@@ -43,18 +43,19 @@ def jobs_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[Callable]:
 
     Args:
         cfg: AdminBridgeConfig instance. If None, uses default credentials.
+        warehouse_id: Optional SQL warehouse ID for faster system table queries.
 
     Returns:
         List of Python callable functions for job-related operations.
 
     Examples:
         >>> from admin_ai_bridge import jobs_admin_tools
-        >>> tools = jobs_admin_tools()
+        >>> tools = jobs_admin_tools(warehouse_id="abc123")
         >>> # Use with MLflow or Databricks agents
         >>> for tool in tools:
         >>>     print(tool.__name__, tool.__doc__)
     """
-    jobs = JobsAdmin(cfg)
+    jobs = JobsAdmin(cfg, warehouse_id=warehouse_id)
 
     def list_long_running_jobs(
         min_duration_hours: float = 4.0,
@@ -98,7 +99,7 @@ def jobs_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[Callable]:
     return [list_long_running_jobs, list_failed_jobs]
 
 
-def dbsql_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[Callable]:
+def dbsql_admin_tools(cfg: AdminBridgeConfig | None = None, warehouse_id: str | None = None) -> List[Callable]:
     """
     Create Python functions for DBSQL administration to use with Databricks agents.
 
@@ -106,15 +107,16 @@ def dbsql_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[Callable]:
 
     Args:
         cfg: AdminBridgeConfig instance. If None, uses default credentials.
+        warehouse_id: Optional SQL warehouse ID for faster system table queries.
 
     Returns:
         List of Python callable functions for DBSQL query history operations.
 
     Examples:
         >>> from admin_ai_bridge import dbsql_admin_tools
-        >>> tools = dbsql_admin_tools()
+        >>> tools = dbsql_admin_tools(warehouse_id="abc123")
     """
-    db = DBSQLAdmin(cfg)
+    db = DBSQLAdmin(cfg, warehouse_id=warehouse_id)
 
     def top_slowest_queries(
         lookback_hours: float = 24.0,
@@ -156,7 +158,7 @@ def dbsql_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[Callable]:
     return [top_slowest_queries, user_query_summary]
 
 
-def clusters_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[Callable]:
+def clusters_admin_tools(cfg: AdminBridgeConfig | None = None, warehouse_id: str | None = None) -> List[Callable]:
     """
     Create Python functions for Clusters administration to use with Databricks agents.
 
@@ -164,15 +166,16 @@ def clusters_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[Callable]
 
     Args:
         cfg: AdminBridgeConfig instance. If None, uses default credentials.
+        warehouse_id: Optional SQL warehouse ID for faster system table queries.
 
     Returns:
         List of Python callable functions for cluster monitoring operations.
 
     Examples:
         >>> from admin_ai_bridge import clusters_admin_tools
-        >>> tools = clusters_admin_tools()
+        >>> tools = clusters_admin_tools(warehouse_id="abc123")
     """
-    clusters = ClustersAdmin(cfg)
+    clusters = ClustersAdmin(cfg, warehouse_id=warehouse_id)
 
     def list_long_running_clusters(
         min_duration_hours: float = 8.0,
@@ -260,7 +263,7 @@ def security_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[Callable]
     return [who_can_manage_job, who_can_use_cluster]
 
 
-def usage_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[Callable]:
+def usage_admin_tools(cfg: AdminBridgeConfig | None = None, warehouse_id: str | None = None) -> List[Callable]:
     """
     Create Python functions for Usage and Cost administration to use with Databricks agents.
 
@@ -268,15 +271,16 @@ def usage_admin_tools(cfg: AdminBridgeConfig | None = None) -> List[Callable]:
 
     Args:
         cfg: AdminBridgeConfig instance. If None, uses default credentials.
+        warehouse_id: Optional SQL warehouse ID for faster system table queries.
 
     Returns:
         List of Python callable functions for usage, cost, and budget operations.
 
     Examples:
         >>> from admin_ai_bridge import usage_admin_tools
-        >>> tools = usage_admin_tools()
+        >>> tools = usage_admin_tools(warehouse_id="abc123")
     """
-    usage = UsageAdmin(cfg)
+    usage = UsageAdmin(cfg, warehouse_id=warehouse_id)
 
     def top_cost_centers(
         lookback_days: int = 7,

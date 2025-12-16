@@ -32,30 +32,54 @@ class DBSQLAdmin:
 
     Attributes:
         ws: WorkspaceClient instance for API access
+        warehouse_id: Optional SQL warehouse ID for system table queries
     """
 
-    def __init__(self, cfg: AdminBridgeConfig | None = None):
+    def __init__(self, cfg: AdminBridgeConfig | None = None, warehouse_id: str | None = None):
         """
         Initialize DBSQLAdmin with optional configuration.
 
         Args:
             cfg: AdminBridgeConfig instance. If None, uses default credentials.
+            warehouse_id: Optional SQL warehouse ID for faster system table queries.
+                If None, will fall back to API methods.
 
         Examples:
             >>> # Using profile
             >>> cfg = AdminBridgeConfig(profile="DEFAULT")
             >>> dbsql_admin = DBSQLAdmin(cfg)
 
-            >>> # Using default credentials
-            >>> dbsql_admin = DBSQLAdmin()
+            >>> # Using default credentials with warehouse for faster queries
+            >>> dbsql_admin = DBSQLAdmin(warehouse_id="abc123def456")
         """
         self.ws = get_workspace_client(cfg)
-        logger.info("DBSQLAdmin initialized")
+        self.warehouse_id = warehouse_id
+        logger.info(f"DBSQLAdmin initialized (warehouse_id={warehouse_id})")
+
+    def _get_default_warehouse_id(self) -> str:
+        """
+        Get the default SQL warehouse ID.
+
+        Returns:
+            The ID of the first available SQL warehouse.
+
+        Raises:
+            APIError: If no warehouse is available.
+        """
+        try:
+            warehouses = list(self.ws.warehouses.list())
+            if not warehouses:
+                raise APIError("No SQL warehouses available")
+            return warehouses[0].id
+        except Exception as e:
+            logger.error(f"Error getting default warehouse: {e}")
+            raise APIError(f"Failed to get default warehouse: {e}")
 
     def top_slowest_queries(
         self,
         lookback_hours: float = 24.0,
         limit: int = 20,
+        warehouse_id: str | None = None,
     ) -> List[QueryHistoryEntry]:
         """
         Return the top N slowest queries by duration in the given time window.
@@ -68,6 +92,8 @@ class DBSQLAdmin:
                 Default: 24.0 hours.
             limit: Maximum number of results to return. Must be positive.
                 Default: 20.
+            warehouse_id: Optional SQL warehouse ID for faster system table queries.
+                If provided, uses system tables. Otherwise falls back to API.
 
         Returns:
             List of QueryHistoryEntry objects sorted by duration (slowest first).
@@ -93,6 +119,95 @@ class DBSQLAdmin:
             raise ValidationError("limit must be positive")
 
         logger.info(f"Searching for slowest queries in last {lookback_hours}h")
+
+        # Try SQL first if warehouse available
+        if warehouse_id or self.warehouse_id:
+            wh_id = warehouse_id or self.warehouse_id
+            try:
+                logger.info(f"Using system tables (warehouse: {wh_id})")
+                return self._top_slowest_queries_sql(lookback_hours, limit, wh_id)
+            except Exception as e:
+                logger.warning(f"System table query failed, falling back to API: {e}")
+
+        # Fall back to API
+        logger.info("Using API method")
+        return self._top_slowest_queries_api(lookback_hours, limit)
+
+    def _top_slowest_queries_sql(
+        self,
+        lookback_hours: float,
+        limit: int,
+        warehouse_id: str,
+    ) -> List[QueryHistoryEntry]:
+        """Query slowest queries from system.query.history (fast)."""
+
+        now = datetime.now(timezone.utc)
+        start_time = now - timedelta(hours=lookback_hours)
+        start_time_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
+
+        sql = f"""
+        SELECT
+            query_id,
+            warehouse_id,
+            executed_by,
+            status,
+            start_time,
+            end_time,
+            execution_duration / 1000.0 as duration_seconds,
+            statement_text
+        FROM system.query.history
+        WHERE start_time >= '{start_time_str}'
+          AND execution_duration IS NOT NULL
+          AND execution_duration > 0
+        ORDER BY execution_duration DESC
+        LIMIT {limit}
+        """
+
+        try:
+            logger.debug(f"Executing SQL query: {sql}")
+            statement = self.ws.statement_execution.execute_statement(
+                warehouse_id=warehouse_id,
+                statement=sql,
+                wait_timeout="30s"
+            )
+
+            queries = []
+            if statement.result and statement.result.data_array:
+                for row in statement.result.data_array:
+                    query_id = str(row[0]) if row[0] is not None else "unknown"
+                    wh_id = str(row[1]) if row[1] is not None else None
+                    user_name = str(row[2]) if row[2] is not None else None
+                    status = str(row[3]) if row[3] is not None else None
+                    start_time_val = datetime.fromisoformat(row[4]) if row[4] else None
+                    end_time_val = datetime.fromisoformat(row[5]) if row[5] else None
+                    duration_seconds = float(row[6]) if row[6] is not None else 0
+                    sql_text = str(row[7]) if row[7] is not None else None
+
+                    query_entry = QueryHistoryEntry(
+                        query_id=query_id,
+                        warehouse_id=wh_id,
+                        user_name=user_name,
+                        status=status,
+                        start_time=start_time_val,
+                        end_time=end_time_val,
+                        duration_seconds=duration_seconds,
+                        sql_text=sql_text,
+                    )
+                    queries.append(query_entry)
+
+            logger.info(f"Found {len(queries)} slow queries via SQL")
+            return queries
+
+        except Exception as e:
+            logger.error(f"Error executing SQL query: {e}")
+            raise APIError(f"Failed to query slowest queries from system tables: {e}")
+
+    def _top_slowest_queries_api(
+        self,
+        lookback_hours: float,
+        limit: int,
+    ) -> List[QueryHistoryEntry]:
+        """Query slowest queries using API calls (slower)."""
 
         # Calculate time window
         now = datetime.now(timezone.utc)
@@ -176,7 +291,7 @@ class DBSQLAdmin:
         queries.sort(key=lambda x: x.duration_seconds or 0, reverse=True)
         result = queries[:limit]
 
-        logger.info(f"Found {len(result)} slow queries")
+        logger.info(f"Found {len(result)} slow queries via API")
         return result
 
     def user_query_summary(

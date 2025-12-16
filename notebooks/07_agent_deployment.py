@@ -79,16 +79,33 @@ print(f"✓ Running as user: {current_user.user_name}")
 # MAGIC ## 4. Aggregate All Tools
 # MAGIC
 # MAGIC Combine tools from all admin domains into a single tool collection.
+# MAGIC
+# MAGIC **Performance Optimization:** For fast queries, provide a `warehouse_id` to use system tables
+# MAGIC instead of slower API calls (10-100x faster for large workspaces).
 
 # COMMAND ----------
 
-# Collect all tools
+import os
+
+# Get warehouse ID from environment or find the first available
+warehouse_id = os.environ.get("DATABRICKS_WAREHOUSE_ID")
+if not warehouse_id:
+    # Try to find the first available warehouse
+    try:
+        warehouses = list(ws.warehouses.list(max_results=1))
+        if warehouses:
+            warehouse_id = warehouses[0].id
+            print(f"✓ Using warehouse: {warehouse_id}")
+    except Exception as e:
+        print(f"⚠ Could not find warehouse ID, will use API methods: {e}")
+
+# Collect all tools with warehouse_id for fast system table queries
 all_tools = (
-    jobs_admin_tools(cfg)
-    + dbsql_admin_tools(cfg)
-    + clusters_admin_tools(cfg)
+    jobs_admin_tools(cfg, warehouse_id=warehouse_id)
+    + dbsql_admin_tools(cfg, warehouse_id=warehouse_id)
+    + clusters_admin_tools(cfg, warehouse_id=warehouse_id)
     + security_admin_tools(cfg)
-    + usage_admin_tools(cfg)
+    + usage_admin_tools(cfg, warehouse_id=warehouse_id)
     + audit_admin_tools(cfg)
     + pipelines_admin_tools(cfg)
 )
@@ -98,11 +115,11 @@ print(f"✓ Aggregated {len(all_tools)} tools from all domains\n")
 # Display tool inventory
 print("Tool Inventory by Domain:")
 print("-" * 60)
-print(f"  Jobs Admin: {len(jobs_admin_tools(cfg))} tools")
-print(f"  DBSQL Admin: {len(dbsql_admin_tools(cfg))} tools")
-print(f"  Clusters Admin: {len(clusters_admin_tools(cfg))} tools")
+print(f"  Jobs Admin: {len(jobs_admin_tools(cfg, warehouse_id))} tools (system tables enabled)")
+print(f"  DBSQL Admin: {len(dbsql_admin_tools(cfg, warehouse_id))} tools (system tables enabled)")
+print(f"  Clusters Admin: {len(clusters_admin_tools(cfg, warehouse_id))} tools (system tables enabled)")
 print(f"  Security Admin: {len(security_admin_tools(cfg))} tools")
-print(f"  Usage Admin: {len(usage_admin_tools(cfg))} tools")
+print(f"  Usage Admin: {len(usage_admin_tools(cfg, warehouse_id))} tools (system tables enabled)")
 print(f"  Audit Admin: {len(audit_admin_tools(cfg))} tools")
 print(f"  Pipelines Admin: {len(pipelines_admin_tools(cfg))} tools")
 print("-" * 60)

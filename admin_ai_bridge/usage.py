@@ -117,6 +117,7 @@ class UsageAdmin:
         self,
         lookback_days: int = 7,
         limit: int = 20,
+        warehouse_id: str | None = None,
     ) -> List[UsageEntry]:
         """
         Return the top cost contributors over the specified time window.
@@ -125,15 +126,17 @@ class UsageAdmin:
         are consuming the most resources (in terms of DBUs or cost).
 
         Note:
-            This is a simplified implementation that estimates usage based on cluster
-            runtime. For production use with actual billing data, you should query
-            system.billing.usage tables or integrate with your billing export.
+            If system.billing.usage table is available and warehouse_id is provided,
+            this method will use actual billing data. Otherwise, it falls back to
+            estimation based on cluster runtime.
 
         Args:
             lookback_days: Number of days to look back for usage data. Must be positive.
                 Default: 7 days.
             limit: Maximum number of results to return. Must be positive.
                 Default: 20.
+            warehouse_id: Optional SQL warehouse ID for faster system table queries.
+                If provided, uses system.billing.usage. Otherwise estimates via API.
 
         Returns:
             List of UsageEntry objects sorted by estimated cost/usage (highest first).
@@ -160,6 +163,88 @@ class UsageAdmin:
             raise ValidationError("limit must be positive")
 
         logger.info(f"Querying top cost centers for last {lookback_days} days")
+
+        # Try SQL first if warehouse available
+        if warehouse_id or self.warehouse_id:
+            wh_id = warehouse_id or self.warehouse_id
+            try:
+                logger.info(f"Using system.billing.usage table (warehouse: {wh_id})")
+                return self._top_cost_centers_sql(lookback_days, limit, wh_id)
+            except Exception as e:
+                logger.warning(f"System table query failed, falling back to estimation: {e}")
+
+        # Fall back to API estimation
+        logger.info("Using API estimation method")
+        return self._top_cost_centers_api(lookback_days, limit)
+
+    def _top_cost_centers_sql(
+        self,
+        lookback_days: int,
+        limit: int,
+        warehouse_id: str,
+    ) -> List[UsageEntry]:
+        """Query top cost centers from system.billing.usage (fast)."""
+
+        now = datetime.now(timezone.utc)
+        start_time = now - timedelta(days=lookback_days)
+        start_date_str = start_time.strftime("%Y-%m-%d")
+
+        sql = f"""
+        SELECT
+            sku_name as scope,
+            usage_metadata.cluster_id as name,
+            MIN(usage_date) as start_time,
+            MAX(usage_date) as end_time,
+            SUM(usage_quantity) as total_dbus,
+            SUM(usage_quantity * list_price) as total_cost
+        FROM system.billing.usage
+        WHERE usage_date >= '{start_date_str}'
+        GROUP BY sku_name, usage_metadata.cluster_id
+        ORDER BY total_cost DESC
+        LIMIT {limit}
+        """
+
+        try:
+            logger.debug(f"Executing SQL query: {sql}")
+            statement = self.ws.statement_execution.execute_statement(
+                warehouse_id=warehouse_id,
+                statement=sql,
+                wait_timeout="30s"
+            )
+
+            usage_entries = []
+            if statement.result and statement.result.data_array:
+                for row in statement.result.data_array:
+                    scope = str(row[0]) if row[0] is not None else "unknown"
+                    name = str(row[1]) if row[1] is not None else "unknown"
+                    start_time_val = datetime.fromisoformat(row[2]) if row[2] else start_time
+                    end_time_val = datetime.fromisoformat(row[3]) if row[3] else now
+                    total_dbus = float(row[4]) if row[4] is not None else 0
+                    total_cost = float(row[5]) if row[5] is not None else 0
+
+                    entry = UsageEntry(
+                        scope=scope,
+                        name=name,
+                        start_time=start_time_val,
+                        end_time=end_time_val,
+                        cost=total_cost,
+                        dbus=total_dbus,
+                    )
+                    usage_entries.append(entry)
+
+            logger.info(f"Found {len(usage_entries)} cost centers via SQL")
+            return usage_entries
+
+        except Exception as e:
+            logger.error(f"Error executing SQL query: {e}")
+            raise APIError(f"Failed to query cost centers from system tables: {e}")
+
+    def _top_cost_centers_api(
+        self,
+        lookback_days: int,
+        limit: int,
+    ) -> List[UsageEntry]:
+        """Estimate top cost centers using API calls (slower)."""
 
         # Calculate time window
         now = datetime.now(timezone.utc)
@@ -294,7 +379,7 @@ class UsageAdmin:
             # Sort by estimated DBUs (highest first)
             usage_entries.sort(key=lambda x: x.dbus if x.dbus else 0, reverse=True)
 
-            logger.info(f"Found {len(usage_entries)} usage entries")
+            logger.info(f"Found {len(usage_entries)} usage entries via API estimation")
             return usage_entries[:limit]
 
         except Exception as e:
