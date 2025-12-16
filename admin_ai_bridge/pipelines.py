@@ -273,12 +273,18 @@ class PipelinesAdmin:
                             if not update.creation_time:
                                 continue
 
-                            # Check if update is within the time window
-                            update_time = datetime.fromtimestamp(
-                                update.creation_time / 1000, tz=timezone.utc
-                            )
+                            try:
+                                # Check if update is within the time window
+                                # Convert creation_time to int if it's a string
+                                creation_time_ms = int(update.creation_time) if isinstance(update.creation_time, str) else update.creation_time
+                                update_time = datetime.fromtimestamp(
+                                    creation_time_ms / 1000, tz=timezone.utc
+                                )
 
-                            if update_time < start_time:
+                                if update_time < start_time:
+                                    continue
+                            except (ValueError, TypeError) as e:
+                                logger.debug(f"Could not parse update creation_time: {e}")
                                 continue
 
                             # Check if the update failed
