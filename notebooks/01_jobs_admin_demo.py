@@ -35,10 +35,10 @@ cfg = AdminBridgeConfig()
 dbutils.widgets.text("warehouse_id", "4b9b953939869799", "SQL Warehouse ID")
 warehouse_id = dbutils.widgets.get("warehouse_id")
 
-# Initialize with warehouse_id for fast system table queries
-jobs_admin = JobsAdmin(cfg, warehouse_id=warehouse_id)
+# Initialize JobsAdmin (will use warehouse_id from methods)
+jobs_admin = JobsAdmin(cfg)
 
-print(f"✓ JobsAdmin initialized successfully (system tables enabled with warehouse: {warehouse_id})")
+print(f"✓ JobsAdmin initialized successfully")
 
 # COMMAND ----------
 
@@ -54,7 +54,8 @@ print(f"✓ JobsAdmin initialized successfully (system tables enabled with wareh
 long_running = jobs_admin.list_long_running_jobs(
     min_duration_hours=4.0,
     lookback_hours=24.0,
-    limit=20
+    limit=20,
+    warehouse_id=warehouse_id
 )
 
 print(f"Found {len(long_running)} long-running jobs\n")
@@ -90,7 +91,8 @@ else:
 # Find failed jobs in the last 24 hours
 failed_jobs = jobs_admin.list_failed_jobs(
     lookback_hours=24.0,
-    limit=50
+    limit=50,
+    warehouse_id=warehouse_id
 )
 
 print(f"Found {len(failed_jobs)} failed jobs in the last 24 hours\n")
@@ -150,7 +152,7 @@ time_windows = [
 
 print("Failed job counts by time window:\n")
 for hours, label in time_windows:
-    jobs = jobs_admin.list_failed_jobs(lookback_hours=float(hours), limit=1000)
+    jobs = jobs_admin.list_failed_jobs(lookback_hours=float(hours), limit=1000, warehouse_id=warehouse_id)
     print(f"  {label:.<20} {len(jobs)} failed jobs")
 
 # COMMAND ----------
@@ -171,7 +173,8 @@ for threshold in duration_thresholds:
     jobs = jobs_admin.list_long_running_jobs(
         min_duration_hours=float(threshold),
         lookback_hours=24.0,
-        limit=100
+        limit=100,
+        warehouse_id=warehouse_id
     )
     results.append({
         "Threshold (hours)": f"> {threshold}h",
@@ -246,12 +249,14 @@ print("=" * 70)
 long_running_24h = jobs_admin.list_long_running_jobs(
     min_duration_hours=4.0,
     lookback_hours=24.0,
-    limit=100
+    limit=100,
+    warehouse_id=warehouse_id
 )
 
 failed_24h = jobs_admin.list_failed_jobs(
     lookback_hours=24.0,
-    limit=100
+    limit=100,
+    warehouse_id=warehouse_id
 )
 
 # Calculate statistics
