@@ -240,9 +240,12 @@ print("Available tools by domain:\n")
 
 tool_info = []
 for tool in all_tools:
+    # Tools are Python functions, so use __name__ and __doc__
+    tool_name = tool.__name__
+    tool_desc = tool.__doc__.strip().split('\n')[0] if tool.__doc__ else "No description"
     tool_info.append({
-        "Tool Name": tool.name,
-        "Description": tool.description[:60] + "..." if len(tool.description) > 60 else tool.description
+        "Tool Name": tool_name,
+        "Description": tool_desc[:60] + "..." if len(tool_desc) > 60 else tool_desc
     })
 
 tools_df = pd.DataFrame(tool_info)
