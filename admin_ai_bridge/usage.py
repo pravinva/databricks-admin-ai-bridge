@@ -209,7 +209,7 @@ class UsageAdmin:
             statement = self.ws.statement_execution.execute_statement(
                 warehouse_id=warehouse_id,
                 statement=sql,
-                wait_timeout="30s"
+                wait_timeout="5m"  # Increased timeout for warehouse startup
             )
 
             usage_entries = []
@@ -527,7 +527,7 @@ class UsageAdmin:
             statement = self.ws.statement_execution.execute_statement(
                 warehouse_id=self.warehouse_id or self._get_default_warehouse_id(),
                 statement=sql,
-                wait_timeout="30s"
+                wait_timeout="5m"  # Increased timeout for warehouse startup
             )
 
             # Parse results
@@ -716,7 +716,7 @@ class UsageAdmin:
             statement = self.ws.statement_execution.execute_statement(
                 warehouse_id=self.warehouse_id or self._get_default_warehouse_id(),
                 statement=sql,
-                wait_timeout="30s"
+                wait_timeout="5m"  # Increased timeout for warehouse startup
             )
 
             # Parse results and calculate status

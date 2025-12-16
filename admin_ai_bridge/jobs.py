@@ -177,7 +177,7 @@ class JobsAdmin:
             statement = self.ws.statement_execution.execute_statement(
                 warehouse_id=warehouse_id,
                 statement=sql,
-                wait_timeout="30s"
+                wait_timeout="5m"  # Increased timeout for warehouse startup
             )
 
             long_running_jobs = []
@@ -421,7 +421,7 @@ class JobsAdmin:
             statement = self.ws.statement_execution.execute_statement(
                 warehouse_id=warehouse_id,
                 statement=sql,
-                wait_timeout="30s"
+                wait_timeout="5m"  # Increased timeout for warehouse startup
             )
 
             failed_jobs = []
