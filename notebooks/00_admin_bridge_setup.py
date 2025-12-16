@@ -29,7 +29,7 @@
 
 # Install dependencies and the admin_ai_bridge library from GitHub
 %pip install --upgrade databricks-sdk>=0.23.0 pydantic>=2.0.0 "databricks-agents>=0.3.0"
-%pip install git+https://github.com/pravinva/databricks-admin-ai-bridge.git
+%pip install --force-reinstall --no-deps git+https://github.com/pravinva/databricks-admin-ai-bridge.git
 
 dbutils.library.restartPython()
 
