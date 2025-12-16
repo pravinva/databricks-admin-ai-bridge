@@ -189,7 +189,8 @@ print(f"  ... and {len(all_tools) - 5} more tools")
 # COMMAND ----------
 
 import mlflow
-from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain.agents import create_tool_calling_agent
+from langchain.agents.agent import AgentExecutor
 from langchain_community.chat_models import ChatDatabricks
 from langchain.prompts import ChatPromptTemplate
 from langchain.tools import StructuredTool
