@@ -26,8 +26,8 @@
 
 # COMMAND ----------
 
-%pip install --upgrade databricks-sdk>=0.23.0 pydantic>=2.0.0 "databricks-agents>=0.3.0" mlflow
-%pip install git+https://github.com/pravinva/databricks-admin-ai-bridge.git
+%pip install --upgrade databricks-sdk>=0.23.0 pydantic>=2.0.0 "databricks-agents>=0.3.0" mlflow langchain langchain-community
+%pip install --force-reinstall --no-deps git+https://github.com/pravinva/databricks-admin-ai-bridge.git
 
 dbutils.library.restartPython()
 
@@ -189,47 +189,80 @@ print(f"  ... and {len(all_tools) - 5} more tools")
 # COMMAND ----------
 
 import mlflow
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_community.chat_models import ChatDatabricks
+from langchain.prompts import ChatPromptTemplate
+from langchain.tools import StructuredTool
 
-print("=" * 70)
-print("AGENT DEPLOYMENT INSTRUCTIONS")
-print("=" * 70)
-print()
-print("To deploy this agent, you have several options:")
-print()
-print("1. **Use Databricks Agent Framework (Recommended)**")
-print("   - Register tools with Unity Catalog")
-print("   - Create agent using Databricks UI")
-print("   - Configure with the system prompt above")
-print("   - Deploy to serving endpoint")
-print()
-print("2. **Use LangChain**")
-print("   - Wrap tools in LangChain format")
-print("   - Create LangChain agent with tools")
-print("   - Deploy using MLflow")
-print()
-print("3. **Direct API Integration**")
-print("   - Call tools directly from your application")
-print("   - Use tools with custom LLM integration")
-print()
-print("=" * 70)
-print()
-print("Example: Using tools directly")
-print("-" * 70)
-print("""
-# Example: Query failed jobs
-from admin_ai_bridge import AdminBridgeConfig, JobsAdmin
+# Set MLflow experiment
+mlflow.set_experiment("/Users/{}/admin_observability_agent".format(current_user.user_name))
 
-cfg = AdminBridgeConfig()
-jobs_admin = JobsAdmin(cfg)
-failed = jobs_admin.list_failed_jobs(
-    lookback_hours=24.0,
-    limit=10,
-    warehouse_id=warehouse_id
-)
+print("Deploying admin-observability-agent...")
+print("This may take a few minutes...\n")
 
-for job in failed:
-    print(f"Job {job.job_name}: {job.state}")
-""")
+try:
+    # Step 1: Convert Python functions to LangChain tools
+    print("1. Converting tools to LangChain format...")
+    langchain_tools = []
+
+    for func in all_tools[:5]:  # Start with first 5 tools
+        tool = StructuredTool.from_function(
+            func=func,
+            name=func.__name__,
+            description=func.__doc__ or f"Tool: {func.__name__}"
+        )
+        langchain_tools.append(tool)
+
+    print(f"   Converted {len(langchain_tools)} tools")
+
+    # Step 2: Create agent with LangChain
+    print("2. Creating LangChain agent...")
+    llm = ChatDatabricks(endpoint="databricks-meta-llama-3-1-70b-instruct")
+
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        ("human", "{input}"),
+        ("placeholder", "{agent_scratchpad}"),
+    ])
+
+    agent = create_tool_calling_agent(llm, langchain_tools, prompt)
+    agent_executor = AgentExecutor(agent=agent, tools=langchain_tools, verbose=True)
+
+    print("   Agent created successfully")
+
+    # Step 3: Log with MLflow
+    print("3. Logging agent to MLflow...")
+    with mlflow.start_run():
+        model_info = mlflow.langchain.log_model(
+            lc_model=agent_executor,
+            artifact_path="agent",
+            registered_model_name="admin_observability_agent"
+        )
+
+    print(f"   Model logged: {model_info.model_uri}")
+
+    # Step 4: Deploy using databricks.agents
+    print("4. Deploying to serving endpoint...")
+    deployed = agents.deploy(
+        model_name="admin_observability_agent",
+        model_version=model_info.registered_model_version,
+        endpoint_name="admin-observability-agent"
+    )
+
+    print()
+    print("✓ Agent deployed successfully!")
+    print(f"  Endpoint: {deployed.endpoint_name}")
+    print(f"  Model: {deployed.model_name} v{deployed.model_version}")
+
+except Exception as e:
+    print(f"⚠ Deployment error: {e}")
+    print()
+    print("Note: Agent deployment requires:")
+    print("  - Databricks Runtime ML")
+    print("  - Access to serving endpoints")
+    print("  - LangChain and dependencies installed")
+    import traceback
+    traceback.print_exc()
 
 # COMMAND ----------
 
